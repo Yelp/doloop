@@ -225,7 +225,7 @@ def did(dbconn, table, id_or_ids):
 
     Usually, these will be IDs that you grabbed using :py:func:`~doloop.get`,
     but it's perfectly fine to update arbitrary IDs on your own initiative,
-    and marke them as done.
+    and mark them as done.
 
     :param dbconn: a :py:mod:`MySQLdb` connection object
     :param str table: name of your task loop table
@@ -249,7 +249,10 @@ def did(dbconn, table, id_or_ids):
 
 def unlock(dbconn, table, id_or_ids):
     """Unlock IDs without marking them updated (i.e. put them back on the
-    queue)
+    queue).
+
+    Useful if you :py:func:`~doloop.get` IDs, but are then unable or unwilling
+    to update them.
 
     :param dbconn: a :py:mod:`MySQLdb` connection object
     :param str table: name of your task loop table
