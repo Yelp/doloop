@@ -8,7 +8,7 @@ Add the IDs of things you want to update with :py:func:`~doloop.add`.
 
 Run one or more workers (e.g in a crontab), with code like this::
 
-    biz_ids = doloop.get(dbconn, 'biz_reindex_loop', 500)
+    biz_ids = doloop.get(dbconn, 'biz_reindex_loop', 100)
 
     for biz_id in biz_ids:
         # run your updating function
@@ -23,17 +23,8 @@ from contextlib import contextmanager
 
 ONE_HOUR = 3600.0
 
+
 ### Utils ###
-
-def _in(colname, values):
-    """Create an IN statement, with the appropriate placeholders."""
-    if not values:
-        return 'FALSE'
-    elif len(values) == 1:
-        return colname + ' = %s'
-    else:
-        return '%s IN (%s)' % (colname, ', '.join('%s' for _ in values))
-
 
 def _to_list(x):
     if isinstance(x, (list, tuple)):
@@ -63,7 +54,9 @@ def _trans(dbconn):
 ### Creating a task loop ###
 
 def create(cursor, table, id_type='INT'):
-    """Create a task loop table. It has a schema like this::
+    """Create a task loop table. It has a schema like this:
+
+    .. code-block sql::
 
         CREATE TABLE `foo_bazify_loop` (
             `id` INT NOT NULL,
@@ -75,10 +68,10 @@ def create(cursor, table, id_type='INT'):
         ) ENGINE=InnoDB
 
     * *id* is the ID of the thing you want to update. It can refer to anything that has a unique ID (doesn't need to be another table in this database). It also need not be an ``INT``, see *id_type*, below.
-    * *last_updated* a unix timestamp, when the thing was last updated, or ``NULL`` if it never was
+    * *last_updated*: a unix timestamp; when the thing was last updated, or ``NULL`` if it never was
     * *lock_until* is also a unix timestamp. It's used to keep workers from grabbing the same IDs, and prioritization. See :py:func:`~doloop.get` for details.
 
-    :param str table: name of your task loop table. It's recommended you name it ``<noun>_<verb>_loop`` (e.g. ``'biz_reindex_loop'``)
+    :param str table: name of your task loop table. Something ending in ``_loop`` is recommended.
     :param str id_type: alternate type for the ``id`` field (e.g. ``'VARCHAR(64)``')
 
     There is no ``drop()`` function because programmatically dropping tables is risky. The relevant SQL is just ``DROP TABLE `foo_bazify_loop```.
@@ -102,7 +95,7 @@ def create_sql(table, id_type='INT'):
             ') ENGINE=InnoDB' % (table, id_type))
 
 
-### Interfacing with the task queue ###
+### Adding and removing IDs ###
 
 def add(dbconn, table, id_or_ids, updated=False):
     """Add IDs to this task loop.
@@ -117,29 +110,28 @@ def add(dbconn, table, id_or_ids, updated=False):
     ids = _to_list(id_or_ids)
     if not ids:
         return 0
-    
+
     if updated:
-        sql = ('INSERT IGNORE INTO `%s` (`id`, `last_updated`)'
-               ' VALUES %s' % (table,
-                               ', '.join('(%s, UNIX_TIMESTAMP())'
-                                         for _ in ids)))
+        row_sql = '(%s, UNIX_TIMESTAMP())'
     else:
-        sql = ('INSERT IGNORE INTO `%s` (`id`)'
-               ' VALUES %s' % (table, ', '.join('(%s)' for _ in ids)))
+        row_sql = '(%s, NULL)'
+
+    sql = ('INSERT IGNORE INTO `%s` (`id`, `last_updated`)'
+           ' VALUES %s' % (table, ', '.join(row_sql for _ in ids)))
 
     with _trans(dbconn) as cursor:
         cursor.execute(sql, ids)
         return cursor.rowcount
 
 
-def delete(dbconn, table, id_or_ids):
+def remove(dbconn, table, id_or_ids):
     """Remove IDs from this task loop.
 
     :param dbconn: a :py:mod:`MySQLdb` connection object
     :param str table: name of your task loop table
     :param id_or_ids: ID or list of IDs to add
 
-    :return: number of IDs deleted
+    :return: number of IDs removed
     """
     ids = _to_list(id_or_ids)
     if not ids:
@@ -152,9 +144,13 @@ def delete(dbconn, table, id_or_ids):
         cursor.execute(sql)
         return cursor.rowcount
 
+### Getting and running tasks ###
 
 def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
     """Get some IDs of things to update and lock them.
+
+    Generally, after you've updated IDs, you'll want to pass them
+    to :py:func:`~doloop.did`
 
     The rules for fetching IDs are:
     * First, fetch IDs with ``locked_until`` in the past, starting with IDs with the oldest ``locked_until`` time. This ensures that IDs don't stay locked forever if a worker gets some IDs and then dies.
@@ -204,18 +200,18 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
                 (table, ', '.join('%s' for _ in ids)))
     
     with _trans(dbconn) as cursor:
-        cursor.execute(select1, limit)
+        cursor.execute(select1, [limit])
         ids.extend(row[0] for row in cursor.fetchall())
 
         if len(ids) < limit:
-            cursor.execute(select2, limit - len(ids))
+            cursor.execute(select2, [limit - len(ids)])
             ids.extend(row[0] for row in cursor.fetchall())
 
         if len(ids) < limit:
-            cursor.execute(select3, limit - len(ids))
+            cursor.execute(select3, [limit - len(ids)])
             ids.extend(row[0] for row in cursor.fetchall())
 
-        cursor.execute(update_sql(), lock_for, *ids)
+        cursor.execute(update_sql(), [lock_for] + ids)
 
         return ids
 
@@ -223,11 +219,15 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
 def did(dbconn, table, id_or_ids):
     """Mark IDs as updated and unlock them.
 
+    Usually, these will be IDs that you grabbed using :py:func:`~doloop.get`,
+    but it's perfectly fine to update arbitrary IDs on your own initiative,
+    and marke them as done.
+
     :param dbconn: a :py:mod:`MySQLdb` connection object
     :param str table: name of your task loop table
     :param id_or_ids: ID or list of IDs that we just updated
 
-    :return: number of IDs updated
+    :return: number of rows updated (mostly useful as a sanity check)
     """
     ids = _to_list(id_or_ids)
     if not ids:
@@ -239,7 +239,7 @@ def did(dbconn, table, id_or_ids):
                                     ', '.join('%s' for _ in ids)))
 
     with _trans(dbconn) as cursor:
-        cursor.execute(sql, *ids)
+        cursor.execute(sql, ids)
         return cursor.rowcount
 
 
@@ -251,47 +251,60 @@ def unlock(dbconn, table, id_or_ids):
     :param str table: name of your task loop table
     :param id_or_ids: ID or list of IDs
 
-    :return: number of IDs unlocked
+    :return: number of rows updated (mostly useful as a sanity check)
     """
     ids = _to_list(id_or_ids)
     if not ids:
         return 0
 
     sql = ('UPDATE `%s` SET `locked_until` = NULL'
-           ' WHERE `id` IN (%s)' % (table,
-                                    ', '.join('%s' for _ in ids)))
+           ' WHERE `id` IN (%s)' % (table, ', '.join('%s' for _ in ids)))
 
     with _trans(dbconn) as cursor:
-        cursor.execute(sql, *ids)
+        cursor.execute(sql, ids)
         return cursor.rowcount
 
 
-def bump(dbconn, table, id_or_ids, lock_for=0, relock=False):
+### Prioritization ###
+
+def bump(dbconn, table, id_or_ids, lock_for=0):
     """Bump priority of IDs.
 
-    We actually do this by locking the IDs (see :py:func:`~doloop.get` for
+    Normally we set ``locked_until`` to the current time, which gives them
+    priority without actually locking them (see :py:func:`~doloop.get` for
     why this works).
+
+    You can make IDs super-high-priority by setting *lock_for* to a
+    negative value.
+
+    You can also lock IDs for a little while, then prioritize them, by setting
+    *lock_for* to a positive value. This can be useful in situations where
+    you expect IDs might be bumped again in the near future, and you only
+    want to run your update function once.
+
+    This function will only ever *decrease* ``locked_until``; it's not
+    possible to keep something locked forever by continually bumping it.
 
     :param dbconn: a :py:mod:`MySQLdb` connection object
     :param str table: name of your task loop table
     :param id_or_ids: ID or list of IDs
-    :param lock_for: How long the IDs should stay locked. Normally we just set ``lock_until`` to the current time. This can be useful if you think it's likely that you're going to want to bump the priority of the same ID(s) again, so that they don't get dequeued and updated several times. This can also be negative to give an ID even higher priority.
-    :param relock: if this is ``True``, update ``lock_until`` even for IDs that are already locked. This is potentially dangerous if an ID is continually bumped, as it will stay locked forever.
+    :param lock_for: Number of seconds that the IDs should stay locked.
     
-    :return: number of IDs (re)locked
+    :return: number of IDs bumped (mostly useful as a sanity check)
     """
     ids = _to_list(id_or_ids)
     if not ids:
         return 0
 
     sql = ('UPDATE `%s` SET `locked_until` = UNIX_TIMESTAMP() + %%s'
-           ' WHERE `id` IN (%s)' % (table,
-                                    ', '.join('%s' for _ in ids)))
-    if not relock:
-        sql += ' AND `locked_until` IS NULL'
+           ' WHERE'
+           ' (`locked_until` IS NULL OR'
+           ' `locked_until` > UNIX_TIMESTAMP() + %%s)'
+           ' AND `id` IN (%s)' %
+           (table, ', '.join('%s' for _ in ids)))
 
     with _trans(dbconn) as cursor:
-        cursor.execute(sql, *ids)
+        cursor.execute(sql, [lock_for, lock_for] + ids)
         return cursor.rowcount
     
 
