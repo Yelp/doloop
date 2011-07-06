@@ -1,0 +1,14 @@
+#!/usr/bin/env python
+"""Prints out a CREATE TABLE to create one or more doloop tables."""
+import sys
+
+import doloop
+
+# TODO: add --id-type switch, opt parsing
+
+def main(args):
+    for table in args:
+        print doloop.create_sql(table) + ';'
+
+if __name__ == '__main__':
+    main(sys.argv[:1])
