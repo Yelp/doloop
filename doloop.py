@@ -40,7 +40,7 @@ def _trans(dbconn):
     try:
         cursor = dbconn.cursor()
         cursor.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
-        cursor.execute('BEGIN TRANSACTION')
+        cursor.execute('START TRANSACTION')
 
         yield cursor
 
@@ -153,11 +153,11 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
     to :py:func:`~doloop.did`
 
     The rules for fetching IDs are:
-    * First, fetch IDs with ``locked_until`` in the past, starting with IDs with the oldest ``locked_until`` time. This ensures that IDs don't stay locked forever if a worker gets some IDs and then dies.
-    * Then, fetch unlocked IDs (with ``locked_until`` set to ``NULL``), with IDs that have never been updated (``last_updated`` set to ``NULL``).
+    * First, fetch IDs with ``lock_until`` in the past, starting with IDs with the oldest ``lock_until`` time. This ensures that IDs don't stay locked forever if a worker gets some IDs and then dies.
+    * Then, fetch unlocked IDs (with ``lock_until`` set to ``NULL``), with IDs that have never been updated (``last_updated`` set to ``NULL``).
     * Finally, fetch unlocked IDs starting IDs with the oldest ``last_updated`` time.
 
-    (Note that this means that ``locked_until`` can also be used to prioritize IDs; see :py:func:`bump`.)
+    (Note that this means that ``lock_until`` can also be used to prioritize IDs; see :py:func:`bump`.)
 
     :param dbconn: a :py:mod:`MySQLdb` connection object
     :param str table: name of your task loop table
@@ -173,20 +173,20 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
     min_loop_time = min_loop_time or 0
     
     select1 = ('SELECT `id` FROM `%s`'
-               ' WHERE `locked_until` <= UNIX_TIMESTAMP()'
-               ' ORDER BY `locked_until` ASC, `last_updated` ASC'
+               ' WHERE `lock_until` <= UNIX_TIMESTAMP()'
+               ' ORDER BY `lock_until` ASC, `last_updated` ASC'
                ' LIMIT %%s'
                ' FOR UPDATE' % (table,))
     
     select2 = ('SELECT `id` FROM `%s`'
-               ' WHERE `locked_until` IS NULL'
+               ' WHERE `lock_until` IS NULL'
                ' AND `last_updated` IS NULL'
                ' ORDER BY `last_updated`'
                ' LIMIT %%s'
                ' FOR UPDATE' % (table,))
 
     select3 = ('SELECT `id` FROM `%s`'
-               ' WHERE `locked_until` IS NULL'
+               ' WHERE `lock_until` IS NULL'
                ' AND `last_updated` <= UNIX_TIMESTAMP() - %%s'
                ' ORDER BY `last_updated`'
                ' LIMIT %%s'
@@ -196,7 +196,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
 
     # this is a function because we need to know how many IDs there are
     def update_sql():
-        return ('UPDATE `%s` SET `locked_until` = UNIX_TIMESTAMP() + %%s'
+        return ('UPDATE `%s` SET `lock_until` = UNIX_TIMESTAMP() + %%s'
                 ' WHERE `id` IN (%s)' %
                 (table, ', '.join('%s' for _ in ids)))
     
@@ -209,7 +209,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
             ids.extend(row[0] for row in cursor.fetchall())
 
         if len(ids) < limit:
-            cursor.execute(select3, [limit - len(ids)])
+            cursor.execute(select3, [min_loop_time, limit - len(ids)])
             ids.extend(row[0] for row in cursor.fetchall())
 
         if not ids:
@@ -238,7 +238,7 @@ def did(dbconn, table, id_or_ids):
         return 0
 
     sql = ('UPDATE `%s` SET `last_updated` = UNIX_TIMESTAMP(),'
-           ' `locked_until` = NULL'
+           ' `lock_until` = NULL'
            ' WHERE `id` IN (%s)' % (table,
                                     ', '.join('%s' for _ in ids)))
 
@@ -264,7 +264,7 @@ def unlock(dbconn, table, id_or_ids):
     if not ids:
         return 0
 
-    sql = ('UPDATE `%s` SET `locked_until` = NULL'
+    sql = ('UPDATE `%s` SET `lock_until` = NULL'
            ' WHERE `id` IN (%s)' % (table, ', '.join('%s' for _ in ids)))
 
     with _trans(dbconn) as cursor:
@@ -277,7 +277,7 @@ def unlock(dbconn, table, id_or_ids):
 def bump(dbconn, table, id_or_ids, lock_for=0):
     """Bump priority of IDs.
 
-    Normally we set ``locked_until`` to the current time, which gives them
+    Normally we set ``lock_until`` to the current time, which gives them
     priority without actually locking them (see :py:func:`~doloop.get` for
     why this works).
 
@@ -289,7 +289,7 @@ def bump(dbconn, table, id_or_ids, lock_for=0):
     you expect IDs might be bumped again in the near future, and you only
     want to run your update function once.
 
-    This function will only ever *decrease* ``locked_until``; it's not
+    This function will only ever *decrease* ``lock_until``; it's not
     possible to keep something locked forever by continually bumping it.
 
     :param dbconn: a :py:mod:`MySQLdb` connection object
@@ -303,10 +303,10 @@ def bump(dbconn, table, id_or_ids, lock_for=0):
     if not ids:
         return 0
 
-    sql = ('UPDATE `%s` SET `locked_until` = UNIX_TIMESTAMP() + %%s'
+    sql = ('UPDATE `%s` SET `lock_until` = UNIX_TIMESTAMP() + %%s'
            ' WHERE'
-           ' (`locked_until` IS NULL OR'
-           ' `locked_until` > UNIX_TIMESTAMP() + %%s)'
+           ' (`lock_until` IS NULL OR'
+           ' `lock_until` > UNIX_TIMESTAMP() + %%s)'
            ' AND `id` IN (%s)' %
            (table, ', '.join('%s' for _ in ids)))
 
