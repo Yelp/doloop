@@ -89,7 +89,7 @@ def create(cursor, table, id_type='INT'):
             `last_updated` INT DEFAULT NULL,
             `lock_until` INT DEFAULT NULL,
             PRIMARY KEY (`id`),
-            INDEX (`lock_until`, `last_updated`),'
+            INDEX (`lock_until`, `last_updated`),
             INDEX (`last_updated`)
         ) ENGINE=InnoDB
 
@@ -112,14 +112,14 @@ def create_sql(table, id_type='INT'):
 
     Useful to power :command:`create-doloop-table` (included with this package), which you can use to pipe ``CREATE`` statements into :command:`mysql`.
     """
-    return ('CREATE TABLE `%s` '
-            '(`id` %s NOT NULL,'
-            ' `last_updated` INT default NULL,'
-            ' `lock_until` INT default NULL,'
-            ' PRIMARY KEY (`id`),'
-            ' INDEX (`lock_until`, `last_updated`),'
-            ' INDEX (`last_updated`)'
-            ') ENGINE=InnoDB' % (table, id_type))
+    return """CREATE TABLE `%s` (
+    `id` %s NOT NULL,
+    `last_updated` INT default NULL,
+    `lock_until` INT default NULL,
+    PRIMARY KEY (`id`),
+    INDEX (`lock_until`, `last_updated`),
+    INDEX (`last_updated`)
+) ENGINE=InnoDB""" % (table, id_type)
 
 
 ### Adding and removing IDs ###
