@@ -8,11 +8,11 @@ Add the IDs of things you want to update with :py:func:`~doloop.add`.
 
 Run one or more workers (e.g in a crontab), with code like this::
 
-    biz_ids = doloop.get(dbconn, 'biz_reindex_loop', 100)
+    foo_ids = doloop.get(dbconn, 'foo_loop', 100)
 
-    for biz_id in biz_ids:
+    for foo_id in foo_ids:
         # run your updating function
-        reindex_biz(biz_id)
+        rebarify_foo(foo_id)
 
     doloop.did(foo_ids)
 """
@@ -35,12 +35,38 @@ def _to_list(x):
         return [x]
 
 
+class PrintingCursorWrapper(object):
+
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    def fill_query(self, query, bind_vals=None):
+        if bind_vals is not None and bind_vals != {}:
+            d = self._cursor.connection.literal(bind_vals)
+            try:
+                query_formatted = query % d
+            except TypeError:
+                query_formatted = query
+        else:
+            query_formatted = query
+        return query_formatted
+
+    def execute(self, query, bind_vals=None):
+        print self.fill_query(query, bind_vals)
+        return self._cursor.execute(query, bind_vals)
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+
 @contextmanager
 def _trans(dbconn):
     try:
         cursor = dbconn.cursor()
         cursor.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
         cursor.execute('START TRANSACTION')
+
+        cursor = PrintingCursorWrapper(cursor)
 
         yield cursor
 
@@ -58,7 +84,7 @@ def create(cursor, table, id_type='INT'):
 
     .. code-block sql::
 
-        CREATE TABLE `foo_bazify_loop` (
+        CREATE TABLE `foo_loop` (
             `id` INT NOT NULL,
             `last_updated` INT default NULL,
             `lock_until` INT default NULL,
@@ -74,7 +100,7 @@ def create(cursor, table, id_type='INT'):
     :param str table: name of your task loop table. Something ending in ``_loop`` is recommended.
     :param str id_type: alternate type for the ``id`` field (e.g. ``'VARCHAR(64)``')
 
-    There is no ``drop()`` function because programmatically dropping tables is risky. The relevant SQL is just ``DROP TABLE `foo_bazify_loop```.
+    There is no ``drop()`` function because programmatically dropping tables is risky. The relevant SQL is just ``DROP TABLE `foo_loop```.
     """
     sql = create_sql(table, id_type=id_type)
     cursor.execute(sql)
@@ -248,8 +274,7 @@ def did(dbconn, table, id_or_ids):
 
 
 def unlock(dbconn, table, id_or_ids):
-    """Unlock IDs without marking them updated (i.e. put them back on the
-    queue).
+    """Unlock IDs without marking them updated.
 
     Useful if you :py:func:`~doloop.get` IDs, but are then unable or unwilling
     to update them.
@@ -315,3 +340,70 @@ def bump(dbconn, table, id_or_ids, lock_for=0):
         return cursor.rowcount
     
 
+### Object-Oriented version ###
+
+class DoLoop(object):
+    """A very thin wrapper that stores connection and table name, so you
+    don't have have to specify *dbconn* and *table* over and over again.
+    """
+
+    def __init__(self, dbconn, table):
+        """Wrap a task loop table in an object
+
+        :param dbconn: a :py:mod:`MySQLdb` connection object, or a callable that returns one (since it's kind of lame to store raw DB connections)
+        :param string table: name of your task loop table
+        """
+        if hasattr(dbconn, '__call__'):
+            self._make_dbconn = dbconn
+        else:
+            self._make_dbconn = lambda: dbconn
+
+        self._table = table
+
+    def add(self, id_or_ids, updated=False):
+        """Add IDs to this task loop.
+
+        See :py:func:`~doloop.add` for details.
+        """
+        return add(self._make_dbconn(), self._table, id_or_ids, updated)
+
+    def remove(self, id_or_ids, updated=False):
+        """Remove IDs from this task loop.
+
+        See :py:func:`~doloop.remove` for details.
+        """
+        return remove(self._make_dbconn(), self._table, id_or_ids)
+
+    def get(self, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
+        """Get some IDs of things to update and lock them.
+
+        See :py:func:`~doloop.get` for details.
+        """
+        return get(
+            self._make_dbconn(), self._table, limit, lock_for, min_loop_time)
+
+    def did(self, id_or_ids):
+        """Mark IDs as updated and unlock them.
+
+        See :py:func:`~doloop.did` for details.
+        """
+        return did(self._make_dbconn(), self._table, id_or_ids)
+
+    def unlock(self, id_or_ids):
+        """Unlock IDs without marking them updated.
+
+        See :py:func:`~doloop.unlock` for details.
+        """
+        return unlock(self._make_dbconn(), self._table, id_or_ids)
+
+    def bump(self, id_or_ids, lock_for=0):
+        """Bump priority of IDs.
+
+        See :py:func:`~doloop.bump` for details.
+        """
+        return bump(self._make_dbconn(), self._table, id_or_ids, lock_for)
+
+    
+
+        
+        
