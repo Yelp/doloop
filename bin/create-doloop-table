@@ -11,4 +11,4 @@ def main(args):
         print doloop.create_sql(table) + ';'
 
 if __name__ == '__main__':
-    main(sys.argv[:1])
+    main(sys.argv[1:])

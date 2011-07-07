@@ -14,7 +14,7 @@ Run one or more workers (e.g in a crontab), with code like this::
         # run your updating function
         rebarify_foo(foo_id)
 
-    doloop.did(foo_ids)
+    doloop.did(dbconn, 'foo_loop', foo_ids)
 """
 from __future__ import with_statement
 
@@ -36,20 +36,20 @@ def _to_list(x):
 
 
 class PrintingCursorWrapper(object):
+    """Cursor wrapper that prints SQL statements. Only used for hand-testing
+    in development."""
 
     def __init__(self, cursor):
         self._cursor = cursor
 
     def fill_query(self, query, bind_vals=None):
-        if bind_vals is not None and bind_vals != {}:
-            d = self._cursor.connection.literal(bind_vals)
+        if bind_vals:
             try:
-                query_formatted = query % d
+                return query % self._cursor.connection.literal(bind_vals)
             except TypeError:
-                query_formatted = query
+                return query
         else:
-            query_formatted = query
-        return query_formatted
+            return query
 
     def execute(self, query, bind_vals=None):
         print self.fill_query(query, bind_vals)
@@ -66,7 +66,7 @@ def _trans(dbconn):
         cursor.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
         cursor.execute('START TRANSACTION')
 
-        cursor = PrintingCursorWrapper(cursor)
+        #cursor = PrintingCursorWrapper(cursor)
 
         yield cursor
 
@@ -86,21 +86,22 @@ def create(cursor, table, id_type='INT'):
 
         CREATE TABLE `foo_loop` (
             `id` INT NOT NULL,
-            `last_updated` INT default NULL,
-            `lock_until` INT default NULL,
+            `last_updated` INT DEFAULT NULL,
+            `lock_until` INT DEFAULT NULL,
             PRIMARY KEY (`id`),
             INDEX (`lock_until`, `last_updated`),'
             INDEX (`last_updated`)
         ) ENGINE=InnoDB
 
-    * *id* is the ID of the thing you want to update. It can refer to anything that has a unique ID (doesn't need to be another table in this database). It also need not be an ``INT``, see *id_type*, below.
+    * *id* is the ID of the thing you want to update. It can refer to anything that has a unique ID (doesn't need to be another table in this database). It also need not be an ``INT``; see *id_type*, below.
     * *last_updated*: a unix timestamp; when the thing was last updated, or ``NULL`` if it never was
     * *lock_until* is also a unix timestamp. It's used to keep workers from grabbing the same IDs, and prioritization. See :py:func:`~doloop.get` for details.
 
     :param str table: name of your task loop table. Something ending in ``_loop`` is recommended.
     :param str id_type: alternate type for the ``id`` field (e.g. ``'VARCHAR(64)``')
 
-    There is no ``drop()`` function because programmatically dropping tables is risky. The relevant SQL is just ``DROP TABLE `foo_loop```.
+    There is no ``drop()`` function because programmatically dropping tables
+    is risky. The relevant SQL is just ``DROP TABLE `foo_loop```.
     """
     sql = create_sql(table, id_type=id_type)
     cursor.execute(sql)
@@ -345,6 +346,18 @@ def bump(dbconn, table, id_or_ids, lock_for=0):
 class DoLoop(object):
     """A very thin wrapper that stores connection and table name, so you
     don't have have to specify *dbconn* and *table* over and over again.
+
+    For example::
+
+        foo_loop = doloop.DoLoop(dbconn, 'foo_loop')
+
+        foo_ids = foo_loop.get(100)
+
+        for foo_id in foo_ids:
+            # run your updating function
+            rebarify_foo(foo_id)
+
+        doloop.did(foo_ids)
     """
 
     def __init__(self, dbconn, table):
