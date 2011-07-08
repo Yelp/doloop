@@ -19,7 +19,7 @@ def main(args):
         print
 
 def make_option_parser():
-    usage = '%prog [options] table [table ...]'
+    usage = '%prog [options] table [table ...] | mysql -D dbname'
     description = ('Print SQL to create one or more task loop tables.')
     parser = optparse.OptionParser(usage=usage, description=description)
 
