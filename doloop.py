@@ -1,3 +1,16 @@
+# Copyright 2011 Yelp
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """Task loop for keeping things updated.
 
 Basic usage:
@@ -18,10 +31,15 @@ Run one or more workers (e.g in a crontab), with code like this::
 """
 from __future__ import with_statement
 
+__author__ = 'David Marin <dave@yelp.com>'
+__version__ = '0.1'
+
 from contextlib import contextmanager
 
 
-ONE_HOUR = 3600.0
+ONE_HOUR = 60*60
+ONE_DAY = 60*60*24
+ONE_WEEK = 60*60*24*7
 
 
 ### Utils ###
@@ -60,10 +78,10 @@ class PrintingCursorWrapper(object):
 
 
 @contextmanager
-def _trans(dbconn):
+def _trans(dbconn, level='READ COMMITTED'):
     try:
         cursor = dbconn.cursor()
-        cursor.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
+        cursor.execute('SET TRANSACTION ISOLATION LEVEL ' + level)
         cursor.execute('START TRANSACTION')
 
         #cursor = PrintingCursorWrapper(cursor)
@@ -79,7 +97,7 @@ def _trans(dbconn):
 
 ### Creating a task loop ###
 
-def create(cursor, table, id_type='INT'):
+def create(dbconn, table, id_type='INT'):
     """Create a task loop table. It has a schema like this:
 
     .. code-block sql::
@@ -96,17 +114,18 @@ def create(cursor, table, id_type='INT'):
     * *last_updated*: a unix timestamp; when the thing was last updated, or ``NULL`` if it never was
     * *lock_until* is also a unix timestamp. It's used to keep workers from grabbing the same IDs, and prioritization. See :py:func:`~doloop.get` for details.
 
+    :param dbconn: a :py:mod:`MySQLdb` connection object
     :param str table: name of your task loop table. Something ending in ``_loop`` is recommended.
     :param str id_type: alternate type for the ``id`` field (e.g. ``'VARCHAR(64)``')
 
     There is no ``drop()`` function because programmatically dropping tables
     is risky. The relevant SQL is just ``DROP TABLE `foo_loop```.
     """
-    sql = create_sql(table, id_type=id_type)
-    cursor.execute(sql)
+    sql = sql_for_create(table, id_type=id_type)
+    dbconn.cursor().execute(sql)
 
 
-def create_sql(table, id_type='INT'):
+def sql_for_create(table, id_type='INT'):
     """Get SQL used by :py:func:`create`.
 
     Useful to power :command:`create-doloop-table` (included with this package), which you can use to pipe ``CREATE`` statements into :command:`mysql`.
@@ -187,7 +206,7 @@ def remove(dbconn, table, id_or_ids):
         return cursor.rowcount
 
 
-### Getting and running tasks ###
+### Getting and updating IDs ###
 
 def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
     """Get some IDs of things to update and lock them.
@@ -221,6 +240,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
                ' LIMIT %%s'
                ' FOR UPDATE' % (table,))
 
+    # TODO: merge select1 and select2
     select2 = ('SELECT `id` FROM `%s`'
                ' WHERE `lock_until` IS NULL'
                ' AND `last_updated` IS NULL'
@@ -247,13 +267,14 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
         cursor.execute(select1, [limit])
         ids.extend(row[0] for row in cursor.fetchall())
 
-        if len(ids) < limit:
-            cursor.execute(select2, [limit - len(ids)])
-            ids.extend(row[0] for row in cursor.fetchall())
+        if not locked_only:
+            if len(ids) < limit:
+                cursor.execute(select2, [limit - len(ids)])
+                ids.extend(row[0] for row in cursor.fetchall())
 
-        if len(ids) < limit:
-            cursor.execute(select3, [min_loop_time, limit - len(ids)])
-            ids.extend(row[0] for row in cursor.fetchall())
+            if len(ids) < limit:
+                cursor.execute(select3, [min_loop_time, limit - len(ids)])
+                ids.extend(row[0] for row in cursor.fetchall())
 
         if not ids:
             return []
@@ -406,6 +427,32 @@ def check(dbconn, table, id_or_ids):
         return dict((id_, (since_updated, locked_for))
                     for id_, since_updated, locked_for in cursor.fetchall())
 
+def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
+    """Get stats on the performance of the task loop as a whole
+
+    This returns a dictionary with the following statistics:
+
+    * *num_locked*: The number of IDs that are locked
+    * *max_lock_time*: The max wait time before the last lock will expire; if nothing has a lock time in the future, this will be 0.
+    * *num_updated*: The number of IDs that are *unlocked* and have been updated
+    * *num_never_updated*: The number of IDs that are *unlocked* and have never been updated
+    * *max_update_delay*: The longest time any *unlocked* ID has gone without being updated.
+    * *num_delayed*: A map from a number of seconds (by default, one day and one week) to the number of *unlocked* IDs that were last updated before that many seconds ago.
+
+    :param delay_thresholds: A sequence of numbers of seconds; use this to set alternate thresholds for *num_delayed*.
+
+    We don't collect stats on the update time of locked IDs because there isn't
+    an index to support this (and we don't want to add one just for this
+    function).
+
+    Also, we use the ``READ UNCOMMITTED`` isolation level so as not to do
+    too much locking, so don't worry if the numbers don't quite add up right.
+
+    This function does not require write access to your database.
+    """
+    # TODO: implement this
+    raise NotImplementedError
+
 
 ### Object-Oriented version ###
 
@@ -489,3 +536,10 @@ class DoLoop(object):
         See :py:func:`~doloop.check` for details.
         """
         return check(self._make_dbconn(), self._table, id_or_ids)
+
+    def stats(self, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
+        """Check on the performance of the task loop as a whole.
+
+        See :py:func:`~doloop.stats` for details.
+        """
+        return stats(self._make_dbconn(), self._table, delay_thresholds)

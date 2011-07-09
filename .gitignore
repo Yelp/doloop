@@ -5,4 +5,4 @@
 
 build
 dist
-s3mysqldump.egg-info
+doloop.egg-info
