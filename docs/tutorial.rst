@@ -63,16 +63,14 @@ Doing updates
 
 The basic workflow is to use :py:func:`doloop.get` to grab the IDs of the 
 things that have gone the longest without being updated, perform your updates, 
-and then mark them as done with :py:func:`doloop.did`:
-
-.. code-block:: python
+and then mark them as done with :py:func:`doloop.did`::
 
     user_ids = doloop.get(dbconn, 'user_loop', 1000)
 
-	for user_id in user_ids:
+    for user_id in user_ids:
         ... # run your update logic
 
-	doloop.did(dbconn, 'user_loop', user_ids)
+    doloop.did(dbconn, 'user_loop', user_ids)
 
 A good, low-effort way to set up workers is to write a script that runs in a
 crontab. It's perfectly safe (and encouraged) to run several workers 
