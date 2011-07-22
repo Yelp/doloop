@@ -78,7 +78,7 @@ class PrintingCursorWrapper(object):
 
 
 @contextmanager
-def _trans(dbconn, level='READ COMMITTED'):
+def _trans(dbconn, level='READ COMMITTED', read_only=False):
     try:
         cursor = dbconn.cursor()
         cursor.execute('SET TRANSACTION ISOLATION LEVEL ' + level)
@@ -88,8 +88,11 @@ def _trans(dbconn, level='READ COMMITTED'):
 
         yield cursor
 
-        dbconn.commit()
-
+        if read_only:
+            dbconn.rollback()
+        else:
+            dbconn.commit()
+        
     except:
         dbconn.rollback()
         raise
@@ -267,14 +270,13 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
         cursor.execute(select1, [limit])
         ids.extend(row[0] for row in cursor.fetchall())
 
-        if not locked_only:
-            if len(ids) < limit:
-                cursor.execute(select2, [limit - len(ids)])
-                ids.extend(row[0] for row in cursor.fetchall())
+        if len(ids) < limit:
+            cursor.execute(select2, [limit - len(ids)])
+            ids.extend(row[0] for row in cursor.fetchall())
 
-            if len(ids) < limit:
-                cursor.execute(select3, [min_loop_time, limit - len(ids)])
-                ids.extend(row[0] for row in cursor.fetchall())
+        if len(ids) < limit:
+            cursor.execute(select3, [min_loop_time, limit - len(ids)])
+            ids.extend(row[0] for row in cursor.fetchall())
 
         if not ids:
             return []
@@ -360,7 +362,8 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True):
     why this works).
 
     You can make IDs super-high-priority by setting *lock_for* to a
-    negative value.
+    negative value. For example, bumping an ID with ``lock_for=-600`` will
+    give it the same priority as an ID that was bumped 600 seconds ago.
 
     You can also lock IDs for a little while, then prioritize them, by setting
     *lock_for* to a positive value. This can be useful in situations where
@@ -422,36 +425,103 @@ def check(dbconn, table, id_or_ids):
            ' FROM `%s` WHERE `id` IN (%s)' %
            (table, ', '.join('%s' for _ in ids)))
 
-    with _trans(dbconn) as cursor:
+    with _trans(dbconn, read_only=True) as cursor:
         cursor.execute(sql, ids)
         return dict((id_, (since_updated, locked_for))
                     for id_, since_updated, locked_for in cursor.fetchall())
 
+
 def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
-    """Get stats on the performance of the task loop as a whole
+    """Get stats on the performance of the task loop as a whole.
 
-    This returns a dictionary with the following statistics:
+    :param dbconn: a :py:mod:`MySQLdb` connection object
+    :param str table: name of your task loop table
+    :param delay_thresholds: controls the *delayed* stat; see below
 
-    * *num_locked*: The number of IDs that are locked
-    * *max_lock_time*: The max wait time before the last lock will expire; if nothing has a lock time in the future, this will be 0.
-    * *num_updated*: The number of IDs that are *unlocked* and have been updated
-    * *num_never_updated*: The number of IDs that are *unlocked* and have never been updated
-    * *max_update_delay*: The longest time any *unlocked* ID has gone without being updated.
-    * *num_delayed*: A map from a number of seconds (by default, one day and one week) to the number of *unlocked* IDs that were last updated before that many seconds ago.
+    This breaks down IDs into four categories:
+    * *locked*: ``lock_until`` is some time in the future
+    * *bumped*: ``lock_until`` is some time in the past.
+    * *updated*: ``lock_until`` is ``NULL`` and ``last_updated`` is set
+    * *new*: both ``lock_until`` and ``last_updated`` are ``NULL``
 
-    :param delay_thresholds: A sequence of numbers of seconds; use this to set alternate thresholds for *num_delayed*.
+    It returns a dictionary mapping the name of each of these categories to the
+    number of IDs in that category, plus these additional keys:
 
-    We don't collect stats on the update time of locked IDs because there isn't
-    an index to support this (and we don't want to add one just for this
-    function).
+    * *total*: total number of IDs in table
+    * *min_id*/*max_id*: min and max IDs (or ``None`` if table is empty)
+    * *min_lock_time*/*max_lock_time*: min/max times that any ID is locked for
+    * *min_bump_time*/*max_bump_time*: min/max times that any ID has been prioritized (``lock_until`` in the past)
+    * *min_update_time*/*max_update_time*: min/max times that an updated job has gone since being updated
+    * *delayed*: map from number of seconds to the number of unlocked IDs that haven't been updated since that time. Default thresholds are one day and one week; you can control these with *delay_thresholds*
 
-    Also, we use the ``READ UNCOMMITTED`` isolation level so as not to do
-    too much locking, so don't worry if the numbers don't quite add up right.
+    For convenience and readability, all times will be floating point numbers.
+    If there are no IDs in a particular category, the time will be ``0.0``,
+    not ``None``.
+
+    This function does several queries in ``READ UNCOMMITTED`` isolation mode,
+    so don't be surprised if the numbers don't quite add up (actually, be
+    surprised if they do).
 
     This function does not require write access to your database.
     """
-    # TODO: implement this
-    raise NotImplementedError
+    id_and_total_sql = 'SELECT COUNT(*), MIN(`id`), MAX(`id`) FROM ' + table
+
+    locked_sql = ('SELECT COUNT(*),'
+                  ' MIN(`lock_until`) - UNIX_TIMESTAMP(),'
+                  ' MAX(`lock_until`) - UNIX_TIMESTAMP()'
+                  ' FROM %s WHERE `lock_until` > UNIX_TIMESTAMP()' % table)
+
+    bumped_sql = ('SELECT COUNT(*),'
+                  ' UNIX_TIMESTAMP() - MAX(`lock_until`),'
+                  ' UNIX_TIMESTAMP() - MIN(`lock_until`)'
+                  ' FROM %s WHERE `lock_until` <= UNIX_TIMESTAMP()' % table)
+
+    updated_sql = ('SELECT COUNT(*),'
+                  ' UNIX_TIMESTAMP() - MAX(`last_updated`),'
+                  ' UNIX_TIMESTAMP() - MIN(`last_updated`)'
+                  ' FROM %s WHERE `lock_until` IS NULL'
+                  ' AND `last_updated` IS NOT NULL' % table)
+
+    new_sql = ('SELECT COUNT(*)'
+               ' FROM %s WHERE `lock_until` IS NULL'
+               ' AND `last_updated` IS NULL' % table)
+
+    delayed_sql = ('SELECT COUNT(*)'
+                  ' FROM %s WHERE `lock_until` IS NULL'
+                  ' AND `last_updated` < UNIX_TIMESTAMP() - %%s' % table)
+
+    with _trans(dbconn, level='READ UNCOMMITTED', read_only=True) as cursor:
+        r = {} # results to return
+
+        cursor.execute(id_and_total_sql)
+        r['total'], r['min_id'], r['max_id'] = cursor.fetchall()[0]
+
+        cursor.execute(locked_sql)
+        r['locked'], r['min_lock_time'], r['max_lock_time'] = (
+            cursor.fetchall()[0])
+
+        cursor.execute(bumped_sql)
+        r['bumped'], r['min_bump_time'], r['max_bump_time'] = (
+            cursor.fetchall()[0])
+        
+        cursor.execute(updated_sql)
+        r['updated'], r['min_update_time'], r['max_update_time'] = (
+            cursor.fetchall()[0])
+        
+        cursor.execute(new_sql)
+        r['new'] = cursor.fetchall()[0][0]
+
+        r['delayed'] = {}
+        for threshold in delay_thresholds:
+            cursor.execute(delayed_sql, [threshold])
+            r['delayed'][threshold] = cursor.fetchall()[0][0]
+
+        # make sure times are always floats
+        for key in r:
+            if key.endswith('_time'):
+                r[key] = float(r[key] or 0)
+
+        return r
 
 
 ### Object-Oriented version ###

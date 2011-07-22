@@ -112,10 +112,9 @@ By default, :py:func:`~doloop.bump` sets the lock to expire immediately, so
 we get priority without any waiting.
 
 However, in real life, users are likely to do several noteworthy things in 
-one session (depending on your users). You can avoid updating the same user 
-several times by setting *lock_for*. For example, the first time a user 
-does something noteworthy, this code will wait for an hour, and then update 
-them::
+one session (well, depending on your users). You can avoid updating
+the same user several times by setting *lock_for*. For example, the first time 
+a user does something noteworthy, this code will wait for an hour, and then update them::
 
     def user_do_something_noteworthy(user_id):
         ...
