@@ -1,8 +1,8 @@
 Tutorial
 ========
 
-Getting set up
---------------
+Setup
+-----
 
 If you don't have a MySQL server, you'll need to `install and run one <http://dev.mysql.com/doc/refman/5.5/en/installing.html>`_. :py:mod:`doloop` 
 uses fairly basic SQL, and should work on MySQL versions as early as 5.0, 
@@ -15,7 +15,7 @@ Next, you'll want to create at least one table:
 
 .. code-block:: sh
 
-    create-doloop-table biz_loop | mysql -D test # or a db of your choice
+    create-doloop-table user_loop | mysql -D test # or a db of your choice
 
 You'll want one table per kind of update on kind of thing. For example, if you 
 want to separately update users' profile pages and their friend 
@@ -28,14 +28,14 @@ if your IDs are 64-character ASCII strings:
 
 .. code-block:: sh
 
-    create-doloop-table -i 'CHAR(64) CHARSET ascii' | mysql -D test
+    create-doloop-table -i 'CHAR(64) CHARSET ascii' user_loop | mysql -D test
 
 You can also create tables programmatically using :py:func:`doloop.create` and 
 :py:func:`doloop.sql_for_create`.
 
 
-Adding things to the loop
--------------------------
+Adding and removing IDs
+-----------------------
 
 Use :py:func:`doloop.add` to add IDs::
 
@@ -63,7 +63,9 @@ Doing updates
 
 The basic workflow is to use :py:func:`doloop.get` to grab the IDs of the 
 things that have gone the longest without being updated, perform your updates, 
-and then mark them as done with :py:func:`doloop.did`::
+and then mark them as done with :py:func:`doloop.did`:
+
+.. code-block:: python
 
     user_ids = doloop.get(dbconn, 'user_loop', 1000)
 
@@ -80,7 +82,8 @@ workers don't try to update the same things.
 You *should* make sure that your update logic can be safely called 
 twice concurrently for the same ID. In fact, it's totally cool for code that 
 has never called :py:func:`doloop.get` to update arbitrary things and then call 
-:py:func:`~doloop.did` on their IDs to let the workers know.
+:py:func:`~doloop.did` on their IDs to let the workers know. It's also a 
+good idea for your update code to gracefully handle nonexistent IDs.
 
 How many workers you want and when they run is up to you. If 
 there turn out not to be enough workers, things will simply be updated less 
@@ -114,7 +117,7 @@ we get priority without any waiting.
 However, in real life, users are likely to do several noteworthy things in 
 one session (well, depending on your users). You can avoid updating
 the same user several times by setting *lock_for*. For example, the first time 
-a user does something noteworthy, this code will wait for an hour, and then update them::
+a user does something noteworthy, this code will keep them locked for an hour, after which they'll be prioritized::
 
     def user_do_something_noteworthy(user_id):
         ...

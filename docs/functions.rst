@@ -4,8 +4,8 @@ Function reference ("API")
 .. currentmodule:: doloop
 
 
-Creating a task loop table
---------------------------
+Setup
+-----
 
 .. autofunction:: create
 .. autofunction:: sql_for_create
@@ -18,8 +18,8 @@ Adding and removing IDs
 .. autofunction:: remove
 
 
-Getting and updating IDs
-------------------------
+Doing updates
+-------------
 
 .. autofunction:: get
 .. autofunction:: did
