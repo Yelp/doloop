@@ -78,7 +78,7 @@ class PrintingCursorWrapper(object):
 
 
 @contextmanager
-def _trans(dbconn, level='READ COMMITTED', read_only=False):
+def _trans(dbconn, level='REPEATABLE READ', read_only=False):
     try:
         cursor = dbconn.cursor()
         cursor.execute('SET TRANSACTION ISOLATION LEVEL ' + level)
@@ -425,7 +425,7 @@ def check(dbconn, table, id_or_ids):
            ' FROM `%s` WHERE `id` IN (%s)' %
            (table, ', '.join('%s' for _ in ids)))
 
-    with _trans(dbconn, read_only=True) as cursor:
+    with _trans(dbconn, level='READ COMMITTED', read_only=True) as cursor:
         cursor.execute(sql, ids)
         return dict((id_, (since_updated, locked_for))
                     for id_, since_updated, locked_for in cursor.fetchall())
