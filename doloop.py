@@ -205,7 +205,7 @@ def remove(dbconn, table, id_or_ids):
         table, ', '.join('%s' for _ in ids))
 
     with _trans(dbconn) as cursor:
-        cursor.execute(sql)
+        cursor.execute(sql, ids)
         return cursor.rowcount
 
 
@@ -227,19 +227,24 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
     :param dbconn: a :py:mod:`MySQLdb` connection object
     :param str table: name of your task loop table
     :param int limit: max number of IDs to fetch
-    :param lock_for: a conservative upper bound for how long we expect to take to update this ID, in seconds. Default is one hour.
+    :param lock_for: a conservative upper bound for how long we expect to take to update this ID, in seconds. Default is one hour. Must be positive
     :param min_loop_time: If a job is unlocked, make sure it was last updated at least this many seconds ago, so that we don't spin on the same IDs.
 
     :return: list of IDs
     """
+    if not lock_for > 0:
+        raise ValueError('lock_for must be positive, not %d' % (lock_for,))
+    
     if not limit:
         return []
 
     min_loop_time = min_loop_time or 0
 
+    # order by ID as a tie-breaker, to make tests consistent
+
     select1 = ('SELECT `id` FROM `%s`'
                ' WHERE `lock_until` <= UNIX_TIMESTAMP()'
-               ' ORDER BY `lock_until` ASC, `last_updated` ASC'
+               ' ORDER BY `lock_until`, `last_updated`, `id`'
                ' LIMIT %%s'
                ' FOR UPDATE' % (table,))
 
@@ -247,14 +252,14 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
     select2 = ('SELECT `id` FROM `%s`'
                ' WHERE `lock_until` IS NULL'
                ' AND `last_updated` IS NULL'
-               ' ORDER BY `last_updated`'
+               ' ORDER BY `last_updated`, `id`'
                ' LIMIT %%s'
                ' FOR UPDATE' % (table,))
 
     select3 = ('SELECT `id` FROM `%s`'
                ' WHERE `lock_until` IS NULL'
                ' AND `last_updated` <= UNIX_TIMESTAMP() - %%s'
-               ' ORDER BY `last_updated`'
+               ' ORDER BY `last_updated`, `id`'
                ' LIMIT %%s'
                ' FOR UPDATE' % (table,))
 
@@ -548,6 +553,8 @@ class DoLoop(object):
 
         :param dbconn: a :py:mod:`MySQLdb` connection object, or a callable that returns one (since it's kind of lame to store raw DB connections)
         :param string table: name of your task loop table
+
+        You can read (but not change) the table name by calling ``self.table``
         """
         if hasattr(dbconn, '__call__'):
             self._make_dbconn = dbconn
@@ -555,6 +562,10 @@ class DoLoop(object):
             self._make_dbconn = lambda: dbconn
 
         self._table = table
+
+    @property
+    def table(self):
+        return self._table
 
     def add(self, id_or_ids, updated=False):
         """Add IDs to this task loop.
@@ -613,3 +624,4 @@ class DoLoop(object):
         See :py:func:`~doloop.stats` for details.
         """
         return stats(self._make_dbconn(), self._table, delay_thresholds)
+
