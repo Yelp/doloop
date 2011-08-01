@@ -200,12 +200,40 @@ class DoLoopTestCase(TestCase):
 
         assert_equal(loop.get(10, min_loop_time=0), range(10, 15))
 
-    def test_lock_for_must_be_positive(self):
+    def test_lock_for_must_be_a_positive_number(self):
         loop = self.create_doloop()
-        loop.add(range(10, 15))
 
+        loop.get(10, lock_for=20)
+        loop.get(10, lock_for=20.5)
+        
         assert_raises(ValueError, loop.get, 10, lock_for=-600)
         assert_raises(ValueError, loop.get, 10, lock_for=0)
+
+        assert_raises(TypeError, loop.get, 10, lock_for=None)
+        assert_raises(TypeError, loop.get, 10, lock_for=[1, 2, 3])
+       
+    def test_limit_must_be_a_nonnegative_integer(self):
+        loop = self.create_doloop()
+
+        loop.get(10)
+        loop.get(0)
+
+        assert_raises(ValueError, loop.get, -1)
+        
+        assert_raises(TypeError, loop.get, 34.5)
+        assert_raises(TypeError, loop.get, 24.0)
+        assert_raises(TypeError, loop.get, None)
+        assert_raises(TypeError, loop.get, [1, 2, 3])
+
+    def test_min_loop_time_must_be_a_number(self):
+        loop = self.create_doloop()
+        loop.get(10, min_loop_time=20)
+        loop.get(10, min_loop_time=20.5)
+        loop.get(10, min_loop_time=0)
+        loop.get(10, min_loop_time=-11.1) # negative is okay
+
+        assert_raises(TypeError, loop.get, 10, min_loop_time=None)
+        assert_raises(TypeError, loop.get, 10, min_loop_time=[1, 2, 3])
 
     def test_locks_eventually_expire_please_wait_3_seconds_or_so(self):
         loop = self.create_doloop()
@@ -217,6 +245,123 @@ class DoLoopTestCase(TestCase):
 
         time.sleep(3)
         assert_equal(loop.get(10), range(10, 15))
+
+    def test_prioritization_please_wait_1_second_or_so(self):
+        loop = self.create_doloop()
+
+        loop.add(range(10, 20))
+        loop.did(19)
+        time.sleep(1.1) # make sure UNIX_TIMESTAMP() changes
+        loop.did(13)
+        loop.bump([14, 17])
+        loop.bump([15, 11], lock_for=60*60) # lock for an hour
+        loop.bump([16, 12], lock_for=-60*60)
+
+        # first get the stuff that was super-bumped, then the stuff
+        # that was bumped, then the new stuff, then the stuff that's done
+        # already
+        assert_equal(loop.get(10, min_loop_time=0),
+                     [12, 16, 14, 17, 10, 18, 19, 13])
+
+    ### tests for did() ###
+
+    def test_did_nothing(self):
+        loop = self.create_doloop()
+        assert_equal(loop.did([]), 0)
+
+    def test_did_please_wait_1_second_or_so(self):
+        loop = self.create_doloop()
+
+        loop.add(range(10, 20))
+        assert_equal(loop.did(11), 1)
+        time.sleep(1.1) # make sure UNIX_TIMESTAMP() changes
+        assert_equal(loop.did([11, 13, 15, 17, 19]), 5) # 11 is updated again
+
+        assert_equal(loop.get(10), [10, 12, 14, 16, 18])
+
+    def test_did_auto_add(self):
+        loop = self.create_doloop()
+
+        assert_equal(loop.get(10), [])
+
+        assert_equal(loop.did(111), 1) # 111 auto-added
+        loop.add(222)
+        assert_equal(loop.did([222, 333], auto_add=False), 1) # no row for 333
+
+        assert_equal(loop.get(10, min_loop_time=0), [111, 222])
+
+    ### tests for unlock() ###
+
+    def test_unlock_nothing(self):
+        loop = self.create_doloop()
+        assert_equal(loop.did([]), 0)
+
+    def test_unlock(self):
+        loop = self.create_doloop()
+
+        loop.add(range(10, 20))
+        ids = loop.get(5)
+        assert_equal(loop.unlock(ids), 5)
+        assert_equal(loop.unlock(ids), 0) # already unlocked
+
+        # unlocking doesn't re-prioritize the IDs since it doesn't touch
+        # last_updated
+        assert_equal(loop.get(10), range(10, 20))
+        assert_equal(loop.get(10), [])
+
+        # try unlocking just one ID
+        assert_equal(loop.unlock(7), 1)
+        assert_equal(loop.get(10), [7])
+        
+    def test_unlock_auto_add(self):
+        loop = self.create_doloop()
+
+        assert_equal(loop.get(10), [])
+
+        loop.add(111)
+        assert_equal(loop.unlock([111, 222]), 1) # 111 already added
+        assert_equal(loop.unlock(333, auto_add=False), 0) # no row for 333
+
+        assert_equal(loop.get(10), [111, 222])
+
+    ### tests for bump() ###
+
+    def test_bump_nothing(self):
+        loop = self.create_doloop()
+        assert_equal(loop.bump([]), 0)
+
+    def test_bump(self):
+        loop = self.create_doloop()
+        loop.add(range(10, 20))
+
+        assert_equal(loop.bump(19), 1)
+        assert_equal(loop.bump([17, 12], lock_for=-10), 2) # super-bump
+        assert_equal(loop.bump([13, 18], lock_for=10), 2) # bump but lock
+
+        assert_equal(loop.get(5), [12, 17, 19, 10, 11])
+
+    def test_multi_bump_please_wait_3_seconds_or_so(self):
+        loop = self.create_doloop()
+        loop.add(range(10, 20))
+
+        assert_equal(loop.bump(17, lock_for=3), 1)
+        assert_equal(loop.get(1), [10]) # 17 is bumped but locked
+
+        time.sleep(1.1)
+        assert_equal(loop.bump(17, lock_for=3), 0) # don't re-bump
+        assert_equal(loop.get(1), [11]) # 17 is bumped but locked
+       
+        time.sleep(2)
+        assert_equal(loop.get(1), [17]) # lock on 17 has expired
+
+    def test_bump_auto_add(self):
+        loop = self.create_doloop()
+        loop.add(range(10, 20))
+
+        assert_equal(loop.bump(17), 1)
+        assert_equal(loop.bump([19, 25], lock_for=-10, auto_add=False),
+                     1) # no row for 225
+        assert_equal(loop.get(5), [19, 17, 10, 11, 12])
 
     ### tests for the DoLoop wrapper object ###
 

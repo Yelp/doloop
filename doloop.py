@@ -232,13 +232,28 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
 
     :return: list of IDs
     """
+    # do type checking up-front to avoid cryptic error messages from
+    # broken SQL queries
+
+    if not isinstance(lock_for, (int, long, float)):
+        raise TypeError('lock_for must be a number, not %r' % (lock_for,))
+
     if not lock_for > 0:
         raise ValueError('lock_for must be positive, not %d' % (lock_for,))
     
-    if not limit:
-        return []
+    if not isinstance(min_loop_time, (int, long, float)):
+        raise TypeError('min_loop_time must be a number, not %r' %
+                        (min_loop_time,))
 
-    min_loop_time = min_loop_time or 0
+    if not isinstance(limit, (int, long)):
+        raise TypeError('limit must be an integer, not %r' % (limit,))
+
+    if not limit >= 0:
+        raise ValueError('limit must not be negative, was %r' % (limit,))
+
+
+    if limit == 0:
+        return []
 
     # order by ID as a tie-breaker, to make tests consistent
 
@@ -386,6 +401,12 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True):
 
     :return: number of IDs bumped (mostly useful as a sanity check)
     """
+    # type-checking lock_for up-front to avoid cryptic error messages from
+    # broken SQL queries
+    if not isinstance(lock_for, (int, long, float)):
+        raise TypeError('lock_for must be a number, not %r' %
+                        (lock_for,))
+
     ids = _to_list(id_or_ids)
     if not ids:
         return 0
