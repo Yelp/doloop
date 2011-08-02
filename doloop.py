@@ -57,38 +57,12 @@ def _to_list(x):
         return [x]
 
 
-class PrintingCursorWrapper(object):
-    """Cursor wrapper that prints SQL statements. Only used for hand-testing
-    in development."""
-
-    def __init__(self, cursor):
-        self._cursor = cursor
-
-    def fill_query(self, query, bind_vals=None):
-        if bind_vals:
-            try:
-                return query % self._cursor.connection.literal(bind_vals)
-            except TypeError:
-                return query
-        else:
-            return query
-
-    def execute(self, query, bind_vals=None):
-        print self.fill_query(query, bind_vals)
-        return self._cursor.execute(query, bind_vals)
-
-    def __getattr__(self, name):
-        return getattr(self._cursor, name)
-
-
 @contextmanager
 def _trans(dbconn, level='REPEATABLE READ', read_only=False):
     try:
         cursor = dbconn.cursor()
         cursor.execute('SET TRANSACTION ISOLATION LEVEL ' + level)
         cursor.execute('START TRANSACTION')
-
-        #cursor = PrintingCursorWrapper(cursor)
 
         yield cursor
 
