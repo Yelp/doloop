@@ -9,4 +9,4 @@ install or administer a separate server.
 to do once; for that, you might prefer
 `Gearman <http://packages.python.org/gearman/>`_ or something similar.
 
-* Tutorial and documentation: http://packages.python.org/doloop
+See http://packages.python.org/doloop for tutorial and documentation.
