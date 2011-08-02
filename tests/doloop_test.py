@@ -560,6 +560,13 @@ class DoLoopTestCase(TestCase):
 
         assert_equal(stats['delayed'], {1: 1, 10: 0}) # 11
 
+        # check types
+        for key, value in stats.iteritems():
+            if key.endswith('_time'):
+                assert isinstance(value, float), 'expected stats[%r] to be a float, not %r' % (key, value)
+            elif key != 'delayed':
+                assert isinstance(value, (int, long)), 'expected stats[%r] to be an integer, not %r' % (key, value)
+                           
     def test_stats_table_must_be_a_string(self):
         assert_raises(TypeError,
                       doloop.stats, 'foo_loop', self.make_dbconn())
