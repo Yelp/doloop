@@ -243,6 +243,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
     to :py:func:`~doloop.did`
 
     The rules for fetching IDs are:
+
     * First, fetch IDs where ``lock_until`` is now or some time in the past, starting with IDs with the oldest ``lock_until`` time. This ensures that IDs don't stay locked forever if a worker gets some IDs and then dies.
     * Then, fetch unlocked IDs (with ``lock_until`` set to ``NULL``), with IDs that have never been updated (``last_updated`` set to ``NULL``).
     * Finally, fetch unlocked IDs starting IDs with the oldest ``last_updated`` time.
