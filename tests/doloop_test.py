@@ -571,6 +571,24 @@ class DoLoopTestCase(TestCase):
         assert_raises(TypeError,
                       doloop.stats, 'foo_loop', self.make_dbconn())
 
+    def test_delay_thresholds_must_be_numbers(self):
+        loop = self.create_doloop()
+
+        loop.stats(delay_thresholds=(1, 10, 100))
+        loop.stats(delay_thresholds=set([1000, 10000]))
+        loop.stats(delay_thresholds=[1234.5]) # float is okay
+        
+        loop.stats(delay_thresholds=()) # empty is okay
+        
+        stats = loop.stats(delay_thresholds=100000) # single value is okay
+        assert_equal(sorted(stats['delayed']), [100000])
+        
+        stats = loop.stats(delay_thresholds={1: 2, 3: 4}) # dict is okay
+        assert_equal(sorted(stats['delayed']), [1, 3])
+
+        assert_raises(TypeError, loop.stats, delay_thresholds=[[1, 2, 3]])
+        assert_raises(TypeError, loop.stats, delay_thresholds='GNAR')
+
 
     ### tests for the DoLoop wrapper object ###
 

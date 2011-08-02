@@ -512,6 +512,8 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
     """
     _check_table_is_a_string(table)
 
+    delay_thresholds = _to_list(delay_thresholds)
+
     for threshold in delay_thresholds:
         if not isinstance(threshold, (int, long, float)):
             raise TypeError('delay_thresholds must be numbers, not %r' %
