@@ -27,7 +27,8 @@ Documentation
 
    tutorial.rst
    functions.rst
-   object-wrapper.rst
+   wrapper.rst
+   utilities.rst
 
 
 
