@@ -278,8 +278,6 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
 
         UPDATE `...` SET `lock_until` = UNIX_TIMESTAMP() + ...
             WHERE `id` IN (...)
-
-    (Note that all unlocked IDs are handled by a single query.)
     """
     _check_table_is_a_string(table)
 
