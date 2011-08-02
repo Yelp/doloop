@@ -316,15 +316,15 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
                        ' LIMIT %%s'
                        ' FOR UPDATE' % (table,))
 
-    ids = []
-
     # this is a function because we need to know how many IDs there are
-    def update_sql():
+    def update_sql(ids):
         return ('UPDATE `%s` SET `lock_until` = UNIX_TIMESTAMP() + %%s'
                 ' WHERE `id` IN (%s)' %
                 (table, ', '.join('%s' for _ in ids)))
 
     def query(cursor):
+        ids = []
+        
         cursor.execute(select_bumped, [limit])
         ids.extend(row[0] for row in cursor.fetchall())
         
@@ -336,7 +336,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
         if not ids:
             return []
 
-        cursor.execute(update_sql(), [lock_for] + ids)
+        cursor.execute(update_sql(ids), [lock_for] + ids)
 
         return ids
 
