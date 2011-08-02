@@ -12,7 +12,9 @@ What is doloop?
 :py:mod:`doloop` is a simple but well-thought-out system for keeping things 
 with unique IDs updated. It supports concurrency and prioritization.
 
-:py:mod:`doloop`'s only dependency is MySQL; it does not require you to install or administer a separate server.
+:py:mod:`doloop`'s only dependency is 
+`MySQL <http://mysql-python.sourceforge.net/>`_; it does not require you to 
+install or administer a separate server.
 
 :py:mod:`doloop` is *not* ideal for queuing tasks that you only ever want 
 to do once; for that, you might prefer
