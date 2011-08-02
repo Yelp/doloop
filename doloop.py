@@ -36,7 +36,7 @@ __version__ = '0.1'
 
 import sys
 
-from MySQLdb import OperationalError
+import MySQLdb
 
 
 #: One hour, in seconds
@@ -86,7 +86,7 @@ def _run(query, dbconn, level='REPEATABLE READ', read_only=False):
             except:
                 dbconn.rollback()
                 raise
-        except OperationalError, e:
+        except MySQLdb.OperationalError, e:
             # 1213 is MySQL's code for a deadlock
             if not e.args[0] == 1213:
                 raise
@@ -237,18 +237,17 @@ def remove(dbconn, table, id_or_ids):
 ### Getting and updating IDs ###
 
 def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
-    """Get some IDs of things to update and lock them.
+    """Get some IDs of things to update, and lock them.
 
     Generally, after you've updated IDs, you'll want to pass them
-    to :py:func:`~doloop.did`
+    to :py:func:`~doloop.did`.
 
     The rules for fetching IDs are:
 
-    * First, fetch IDs where ``lock_until`` is now or some time in the past, starting with IDs with the oldest ``lock_until`` time. This ensures that IDs don't stay locked forever if a worker gets some IDs and then dies.
-    * Then, fetch unlocked IDs (with ``lock_until`` set to ``NULL``), with IDs that have never been updated (``last_updated`` set to ``NULL``).
-    * Finally, fetch unlocked IDs starting IDs with the oldest ``last_updated`` time.
+    * First, fetch IDs which are locked but whose locks have expired. Starting with the ones that have been locked the longest.
+    * Then, fetch unlocked IDs. Start with those that have *never* been updated, then fetch the ones that have gone the longest without being updated.
 
-    (Note that this means that ``lock_until`` can also be used to prioritize IDs; see :py:func:`bump`.)
+    (Note that this means that the ``lock_until`` column can also be used to prioritize IDs; see :py:func:`bump`.)
 
     :param dbconn: a :py:mod:`MySQLdb` connection object
     :param str table: name of your task loop table
@@ -369,7 +368,7 @@ def did(dbconn, table, id_or_ids, auto_add=True):
                 `lock_until` = NULL
             WHERE `id` IN (...)
 
-    (`INSERT IGNORE` is only run if *auto_add* is ``True``.)
+    (``INSERT IGNORE`` is only run if *auto_add* is ``True``.)
     """
     _check_table_is_a_string(table)
 
@@ -414,7 +413,7 @@ def unlock(dbconn, table, id_or_ids, auto_add=True):
         UPDATE `...` SET `lock_until` = NULL
             WHERE `id` IN (...)
 
-    (`INSERT IGNORE` is only run if *auto_add* is ``True``)
+    (``INSERT IGNORE`` is only run if *auto_add* is ``True``)
     """
     _check_table_is_a_string(table)
 
@@ -483,7 +482,7 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True):
                    `lock_until` > UNIX_TIMESTAMP() + ...)
                   AND `id` IN (...)
 
-    (`INSERT IGNORE` is only run if *auto_add* is ``True``)
+    (``INSERT IGNORE`` is only run if *auto_add* is ``True``)
     """
     _check_table_is_a_string(table)
 
