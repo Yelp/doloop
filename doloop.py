@@ -88,7 +88,7 @@ def create(dbconn, table, id_type='INT'):
 
     .. code-block:: sql
 
-        CREATE TABLE `foo_loop` (
+        CREATE TABLE `...` (
             `id` INT NOT NULL,
             `last_updated` INT DEFAULT NULL,
             `lock_until` INT DEFAULT NULL,
@@ -105,7 +105,7 @@ def create(dbconn, table, id_type='INT'):
     :param str id_type: alternate type for the ``id`` field (e.g. ``'VARCHAR(64)``')
 
     There is no ``drop()`` function because programmatically dropping tables
-    is risky. The relevant SQL is just ``DROP TABLE `foo_loop```.
+    is risky. The relevant SQL is just ``DROP TABLE `...```.
     """
     sql = sql_for_create(table, id_type=id_type)
     dbconn.cursor().execute(sql)
@@ -475,7 +475,7 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True):
 ### Auditing ###
 
 def check(dbconn, table, id_or_ids):
-    """Check the status of IDs.
+    """Check the status of particular IDs.
 
     :param dbconn: a :py:mod:`MySQLdb` connection object
     :param str table: name of your task loop table
