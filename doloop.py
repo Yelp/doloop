@@ -733,7 +733,7 @@ class DoLoop(object):
             self._make_dbconn(), self._table, id_or_ids, lock_for, auto_add)
 
     def check(self, id_or_ids):
-        """Check the status of IDs.
+        """Check the status of particular IDs.
 
         See :py:func:`~doloop.check` for details.
         """
