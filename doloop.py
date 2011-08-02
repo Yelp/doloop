@@ -36,9 +36,13 @@ __version__ = '0.1'
 
 from contextlib import contextmanager
 
-
+#: One hour, in seconds
 ONE_HOUR = 60*60
+
+#: One day, in seconds
 ONE_DAY = 60*60*24
+
+#: One week, in seconds
 ONE_WEEK = 60*60*24*7
 
 
@@ -97,6 +101,11 @@ def _trans(dbconn, level='REPEATABLE READ', read_only=False):
         dbconn.rollback()
         raise
 
+def _check_table_is_a_string(table):
+    """Check that table is a string, to avoid cryptic SQL errors"""
+    if not isinstance(table, basestring):
+        raise TypeError('table must be a string, not %r' % (table,))
+
 
 ### Creating a task loop ###
 
@@ -133,6 +142,8 @@ def sql_for_create(table, id_type='INT'):
 
     Useful to power :command:`create-doloop-table` (included with this package), which you can use to pipe ``CREATE`` statements into :command:`mysql`.
     """
+    _check_table_is_a_string(table)
+
     return """CREATE TABLE `%s` (
     `id` %s NOT NULL,
     `last_updated` INT default NULL,
@@ -154,6 +165,8 @@ def add(dbconn, table, id_or_ids, updated=False):
 
     :return: number of IDs that are new
     """
+    _check_table_is_a_string(table)
+
     ids = _to_list(id_or_ids)
     if not ids:
         return 0
@@ -197,6 +210,8 @@ def remove(dbconn, table, id_or_ids):
 
     :return: number of IDs removed
     """
+    _check_table_is_a_string(table)
+
     ids = _to_list(id_or_ids)
     if not ids:
         return 0
@@ -232,8 +247,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
 
     :return: list of IDs
     """
-    # do type checking up-front to avoid cryptic error messages from
-    # broken SQL queries
+    _check_table_is_a_string(table)
 
     if not isinstance(lock_for, (int, long, float)):
         raise TypeError('lock_for must be a number, not %r' % (lock_for,))
@@ -320,6 +334,8 @@ def did(dbconn, table, id_or_ids, auto_add=True):
 
     :return: number of rows updated (mostly useful as a sanity check)
     """
+    _check_table_is_a_string(table)
+
     ids = _to_list(id_or_ids)
     if not ids:
         return 0
@@ -350,6 +366,8 @@ def unlock(dbconn, table, id_or_ids, auto_add=True):
 
     :return: number of rows updated (mostly useful as a sanity check)
     """
+    _check_table_is_a_string(table)
+
     ids = _to_list(id_or_ids)
     if not ids:
         return 0
@@ -401,8 +419,8 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True):
 
     :return: number of IDs bumped (mostly useful as a sanity check)
     """
-    # type-checking lock_for up-front to avoid cryptic error messages from
-    # broken SQL queries
+    _check_table_is_a_string(table)
+
     if not isinstance(lock_for, (int, long, float)):
         raise TypeError('lock_for must be a number, not %r' %
                         (lock_for,))
@@ -441,6 +459,8 @@ def check(dbconn, table, id_or_ids):
 
     This function does not require write access to your database.
     """
+    _check_table_is_a_string(table)
+
     ids = _to_list(id_or_ids)
     if not ids:
         return {}
@@ -478,7 +498,7 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
     * *min_lock_time*/*max_lock_time*: min/max times that any ID is locked for
     * *min_bump_time*/*max_bump_time*: min/max times that any ID has been prioritized (``lock_until`` in the past)
     * *min_update_time*/*max_update_time*: min/max times that an updated job has gone since being updated
-    * *delayed*: map from number of seconds to the number of unlocked IDs that haven't been updated since that time. Default thresholds are one day and one week; you can control these with *delay_thresholds*
+    * *delayed*: map from number of seconds to the number of updated (unlocked) IDs that haven't been updated for at least that much time. Default thresholds are one day and one week; you can control these with *delay_thresholds*
 
     For convenience and readability, all times will be floating point numbers.
     If there are no IDs in a particular category, the time will be ``0.0``,
@@ -490,31 +510,39 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
 
     This function does not require write access to your database.
     """
-    id_and_total_sql = 'SELECT COUNT(*), MIN(`id`), MAX(`id`) FROM ' + table
+    _check_table_is_a_string(table)
 
-    locked_sql = ('SELECT COUNT(*),'
+    for threshold in delay_thresholds:
+        if not isinstance(threshold, (int, long, float)):
+            raise TypeError('delay_thresholds must be numbers, not %r' %
+                            (threshold,))
+
+    id_and_total_sql = ('SELECT COUNT(*), MIN(`id`), MAX(`id`)'
+                        ' FROM `%s`' % table)
+
+    locked_sql = ('SELECT COUNT(*), '
                   ' MIN(`lock_until`) - UNIX_TIMESTAMP(),'
                   ' MAX(`lock_until`) - UNIX_TIMESTAMP()'
-                  ' FROM %s WHERE `lock_until` > UNIX_TIMESTAMP()' % table)
+                  ' FROM `%s` WHERE `lock_until` > UNIX_TIMESTAMP()' % table)
 
     bumped_sql = ('SELECT COUNT(*),'
                   ' UNIX_TIMESTAMP() - MAX(`lock_until`),'
                   ' UNIX_TIMESTAMP() - MIN(`lock_until`)'
-                  ' FROM %s WHERE `lock_until` <= UNIX_TIMESTAMP()' % table)
+                  ' FROM `%s` WHERE `lock_until` <= UNIX_TIMESTAMP()' % table)
 
     updated_sql = ('SELECT COUNT(*),'
                   ' UNIX_TIMESTAMP() - MAX(`last_updated`),'
                   ' UNIX_TIMESTAMP() - MIN(`last_updated`)'
-                  ' FROM %s WHERE `lock_until` IS NULL'
+                  ' FROM `%s` WHERE `lock_until` IS NULL'
                   ' AND `last_updated` IS NOT NULL' % table)
 
     new_sql = ('SELECT COUNT(*)'
-               ' FROM %s WHERE `lock_until` IS NULL'
+               ' FROM `%s` WHERE `lock_until` IS NULL'
                ' AND `last_updated` IS NULL' % table)
 
     delayed_sql = ('SELECT COUNT(*)'
-                  ' FROM %s WHERE `lock_until` IS NULL'
-                  ' AND `last_updated` < UNIX_TIMESTAMP() - %%s' % table)
+                  ' FROM `%s` WHERE `lock_until` IS NULL'
+                  ' AND `last_updated` <= UNIX_TIMESTAMP() - %%s' % table)
 
     with _trans(dbconn, level='READ UNCOMMITTED', read_only=True) as cursor:
         r = {} # results to return
@@ -582,6 +610,7 @@ class DoLoop(object):
         else:
             self._make_dbconn = lambda: dbconn
 
+        _check_table_is_a_string(table)
         self._table = table
 
     @property
