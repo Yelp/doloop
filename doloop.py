@@ -86,7 +86,7 @@ def _check_table_is_a_string(table):
 def create(dbconn, table, id_type='INT'):
     """Create a task loop table. It has a schema like this:
 
-    .. code-block sql::
+    .. code-block:: sql
 
         CREATE TABLE `foo_loop` (
             `id` INT NOT NULL,
@@ -138,6 +138,15 @@ def add(dbconn, table, id_or_ids, updated=False):
     :param updated: Set this to true if these IDs have already been updated; this will ``last_updated`` to the current time rather than ``NULL``.
 
     :return: number of IDs that are new
+
+    Runs this query in ``REPEATABLE READ`` mode:
+
+    .. code-block:: sql
+
+        INSERT IGNORE INTO `...` (`id`, `last_updated`)
+            VALUES (...), ...
+
+    (`last_updated` is omitted if *updated* is ``False``).
     """
     _check_table_is_a_string(table)
 
@@ -183,6 +192,12 @@ def remove(dbconn, table, id_or_ids):
     :param id_or_ids: ID or list of IDs to add
 
     :return: number of IDs removed
+
+    Runs this query in ``REPEATABLE READ`` mode:
+
+    .. code-block:: sql
+
+        DELETE FROM `...` WHERE `id` IN (...)
     """
     _check_table_is_a_string(table)
 
@@ -207,7 +222,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
     to :py:func:`~doloop.did`
 
     The rules for fetching IDs are:
-    * First, fetch IDs with ``lock_until`` in the past, starting with IDs with the oldest ``lock_until`` time. This ensures that IDs don't stay locked forever if a worker gets some IDs and then dies.
+    * First, fetch IDs where ``lock_until`` is now or some time in the past, starting with IDs with the oldest ``lock_until`` time. This ensures that IDs don't stay locked forever if a worker gets some IDs and then dies.
     * Then, fetch unlocked IDs (with ``lock_until`` set to ``NULL``), with IDs that have never been updated (``last_updated`` set to ``NULL``).
     * Finally, fetch unlocked IDs starting IDs with the oldest ``last_updated`` time.
 
@@ -220,6 +235,29 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
     :param min_loop_time: If a job is unlocked, make sure it was last updated at least this many seconds ago, so that we don't spin on the same IDs.
 
     :return: list of IDs
+
+    Runs these queries in ``REPEATABLE READ`` mode:
+
+    .. code-block:: sql
+
+        SELECT `id` FROM `...`
+            WHERE `lock_until` <= UNIX_TIMESTAMP()
+            ORDER BY `lock_until`, `last_updated`, `id`
+            LIMIT ...
+            FOR UPDATE
+
+        SELECT `id` FROM `...`
+            WHERE `lock_until` IS NULL
+            AND (`last_updated` IS NULL
+                 OR `last_updated` <= UNIX_TIMESTAMP() - ...)
+            ORDER BY `last_updated`, `id`
+            LIMIT ...
+            FOR UPDATE
+
+        UPDATE `...` SET `lock_until` = UNIX_TIMESTAMP() + ...
+            WHERE `id` IN (...)
+
+    (Note that all unlocked IDs are handled by a single query.)
     """
     _check_table_is_a_string(table)
 
@@ -253,8 +291,8 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
 
     select_unlocked = ('SELECT `id` FROM `%s`'
                        ' WHERE `lock_until` IS NULL'
-                       ' AND (`last_updated` IS NULL'
-                       ' OR `last_updated` <= UNIX_TIMESTAMP() - %%s)'
+                       ' AND (`last_updated` IS NULL OR'
+                       ' `last_updated` <= UNIX_TIMESTAMP() - %%s)'
                        ' ORDER BY `last_updated`, `id`'
                        ' LIMIT %%s'
                        ' FOR UPDATE' % (table,))
@@ -296,6 +334,15 @@ def did(dbconn, table, id_or_ids, auto_add=True):
     :param bool auto_add: Add any IDs that are not already in the table.
 
     :return: number of rows updated (mostly useful as a sanity check)
+
+    Runs this query in ``REPEATABLE READ`` mode:
+
+    .. code-block:: sql
+
+        UPDATE `...`
+            SET `last_updated` = UNIX_TIMESTAMP(),
+                `lock_until` = NULL
+            WHERE `id` IN (...)
     """
     _check_table_is_a_string(table)
 
@@ -328,6 +375,14 @@ def unlock(dbconn, table, id_or_ids, auto_add=True):
     :param bool auto_add: Add any IDs that are not already in the table.
 
     :return: number of rows updated (mostly useful as a sanity check)
+
+    Runs this query in ``REPEATABLE READ`` mode:
+
+    .. code-block:: sql
+
+        UPDATE `...`
+            SET `lock_until` = NULL
+            WHERE `id` IN (...)
     """
     _check_table_is_a_string(table)
 
@@ -381,6 +436,16 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True):
     :param bool auto_add: Add any IDs that are not already in the table.
 
     :return: number of IDs bumped (mostly useful as a sanity check)
+
+    Runs this query in ``REPEATABLE READ`` mode:
+
+    .. code-block:: sql
+
+        UPDATE `...`
+            SET `lock_until` = UNIX_TIMESTAMP() + ...
+            WHERE (`lock_until` IS NULL OR
+                   `lock_until` > UNIX_TIMESTAMP() + ...)
+                  AND `id` IN (...)
     """
     _check_table_is_a_string(table)
 
@@ -421,6 +486,16 @@ def check(dbconn, table, id_or_ids):
     ``lock_for`` minus the current time (both of these in seconds).
 
     This function does not require write access to your database.
+
+    Runs this query in ``READ COMMITTED`` mode:
+
+    .. code-block:: sql
+
+        SELECT `id`,
+               UNIX_TIMESTAMP() - `last_updated`,
+               `lock_until` - UNIX_TIMESTAMP()`
+            FROM `...`
+            WHERE `id` IN (...)
     """
     _check_table_is_a_string(table)
 
@@ -429,8 +504,8 @@ def check(dbconn, table, id_or_ids):
         return {}
 
     sql = ('SELECT `id`,'
-           ' UNIX_TIMESTAMP() - `last_updated` as `since_updated`,'
-           ' `lock_until` - UNIX_TIMESTAMP() as `locked_for`'
+           ' UNIX_TIMESTAMP() - `last_updated`,'
+           ' `lock_until` - UNIX_TIMESTAMP()'
            ' FROM `%s` WHERE `id` IN (%s)' %
            (table, ', '.join('%s' for _ in ids)))
 
@@ -448,30 +523,62 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
     :param delay_thresholds: controls the *delayed* stat; see below
 
     This breaks down IDs into four categories:
-    * *locked*: ``lock_until`` is some time in the future
-    * *bumped*: ``lock_until`` is some time in the past.
-    * *updated*: ``lock_until`` is ``NULL`` and ``last_updated`` is set
-    * *new*: both ``lock_until`` and ``last_updated`` are ``NULL``
+
+    * **locked**: ``lock_until`` is some time in the future
+    * **bumped**: ``lock_until`` is now or some time in the past.
+    * **updated**: ``lock_until`` is ``NULL`` and ``last_updated`` is set
+    * **new**: both ``lock_until`` and ``last_updated`` are ``NULL``
 
     It returns a dictionary mapping the name of each of these categories to the
     number of IDs in that category, plus these additional keys:
 
-    * *total*: total number of IDs in table
-    * *min_id*/*max_id*: min and max IDs (or ``None`` if table is empty)
-    * *min_lock_time*/*max_lock_time*: min/max times that any ID is locked for
-    * *min_bump_time*/*max_bump_time*: min/max times that any ID has been prioritized (``lock_until`` in the past)
-    * *min_update_time*/*max_update_time*: min/max times that an updated job has gone since being updated
-    * *delayed*: map from number of seconds to the number of updated (unlocked) IDs that haven't been updated for at least that much time. Default thresholds are one day and one week; you can control these with *delay_thresholds*
+    * **min_id**/**max_id**: min and max IDs (or ``None`` if table is empty)
+    * **min_lock_time**/**max_lock_time**: min/max times that any ID is locked for
+    * **min_bump_time**/**max_bump_time**: min/max times that any ID has been prioritized (``lock_until`` now or in the past)
+    * **min_update_time**/**max_update_time**: min/max times that an unlocked ID has gone since being updated
+    * **delayed**: map from number of seconds to the number of unlocked IDs where the last time they were updated was at least that long ago. Default thresholds are one day and one week; you can control these with *delay_thresholds*
 
     For convenience and readability, all times will be floating point numbers.
     If there are no IDs in a particular category, the time will be ``0.0``,
     not ``None``.
 
-    This function does several queries in ``READ UNCOMMITTED`` isolation mode,
-    so don't be surprised if the numbers don't quite add up (actually, be
-    surprised if they do).
-
     This function does not require write access to your database.
+
+    Don't be surprised if you see minor discrepancies; this function runs
+    several separate queries in ``READ UNCOMMITTED`` mode:
+
+    .. code-block:: sql
+
+        SELECT MIN(`id`), MAX(`id`) FROM `...`
+
+        SELECT COUNT(*), 
+               MIN(`lock_until`) - UNIX_TIMESTAMP(),
+               MAX(`lock_until`) - UNIX_TIMESTAMP()
+            FROM `...`
+            WHERE `lock_until` > UNIX_TIMESTAMP()
+
+        SELECT COUNT(*),
+               UNIX_TIMESTAMP() - MAX(`lock_until`),
+               UNIX_TIMESTAMP() - MIN(`lock_until`)
+            FROM `...`
+            WHERE `lock_until` <= UNIX_TIMESTAMP()
+
+        SELECT COUNT(*),
+               UNIX_TIMESTAMP() - MAX(`last_updated`),
+               UNIX_TIMESTAMP() - MIN(`last_updated`)
+            FROM `...`
+            WHERE `lock_until` IS NULL
+                  AND `last_updated` IS NOT NULL
+
+         SELECT COUNT(*)
+             FROM `...`
+             WHERE `lock_until` IS NULL
+                   AND `last_updated` IS NULL
+
+         SELECT COUNT(*)
+             FROM `...`
+             WHERE `lock_until` IS NULL
+                   AND `last_updated` <= UNIX_TIMESTAMP() - ...
     """
     _check_table_is_a_string(table)
 
@@ -482,8 +589,7 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
             raise TypeError('delay_thresholds must be numbers, not %r' %
                             (threshold,))
 
-    id_and_total_sql = ('SELECT COUNT(*), MIN(`id`), MAX(`id`)'
-                        ' FROM `%s`' % table)
+    id_sql = ('SELECT MIN(`id`), MAX(`id`) FROM `%s`' % table)
 
     locked_sql = ('SELECT COUNT(*), '
                   ' MIN(`lock_until`) - UNIX_TIMESTAMP(),'
@@ -512,8 +618,8 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
     with _trans(dbconn, level='READ UNCOMMITTED', read_only=True) as cursor:
         r = {} # results to return
 
-        cursor.execute(id_and_total_sql)
-        r['total'], r['min_id'], r['max_id'] = cursor.fetchall()[0]
+        cursor.execute(id_sql)
+        r['min_id'], r['max_id'] = cursor.fetchall()[0]
 
         cursor.execute(locked_sql)
         r['locked'], r['min_lock_time'], r['max_lock_time'] = (

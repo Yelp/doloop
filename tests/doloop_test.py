@@ -410,7 +410,7 @@ class DoLoopTestCase(TestCase):
 
         assert_equal(loop.get(5), [12, 17, 19, 10, 11])
 
-    def test_bump_again_please_wait_4_seconds_or_so(self):
+    def test_bump_same_id_twice_please_wait_4_seconds_or_so(self):
         loop = self.create_doloop()
         loop.add(range(10, 20))
 
@@ -508,7 +508,6 @@ class DoLoopTestCase(TestCase):
             'bumped': 0,
             'updated': 0,
             'new': 0,
-            'total': 0,
             'min_id': None,
             'max_id': None,
             'min_lock_time': 0.0, # times are 0.0, not None, for convenience
@@ -526,7 +525,7 @@ class DoLoopTestCase(TestCase):
 
         assert_equal(loop.get(1), [10])
         loop.did(11)
-        time.sleep(2.1) # wait for 11 to be at least 1 sec old
+        time.sleep(1.1) # wait for 11 to be at least 1 sec old
         loop.bump(12)
         loop.bump(13, lock_for=60)
         loop.bump([14, 15], lock_for=-60)
@@ -537,7 +536,6 @@ class DoLoopTestCase(TestCase):
         assert_equal(stats['bumped'], 3) # 12, 14, and 15
         assert_equal(stats['updated'], 1) # 11
         assert_equal(stats['new'], 4) # 16-19
-        assert_equal(stats['total'], 10)
 
         assert_equal(stats['min_id'], 10)
         assert_equal(stats['max_id'], 19)
