@@ -34,7 +34,10 @@ from __future__ import with_statement
 __author__ = 'David Marin <dave@yelp.com>'
 __version__ = '0.1'
 
-from contextlib import contextmanager
+import sys
+
+from MySQLdb import OperationalError
+
 
 #: One hour, in seconds
 ONE_HOUR = 60*60
@@ -57,23 +60,37 @@ def _to_list(x):
         return [x]
 
 
-@contextmanager
-def _trans(dbconn, level='REPEATABLE READ', read_only=False):
-    try:
-        cursor = dbconn.cursor()
-        cursor.execute('SET TRANSACTION ISOLATION LEVEL ' + level)
-        cursor.execute('START TRANSACTION')
+def _run(query, dbconn, level='REPEATABLE READ', read_only=False):
+    """Do a query in a transaction, retrying on deadlock.
 
-        yield cursor
-
-        if read_only:
-            dbconn.rollback()
-        else:
-            dbconn.commit()
+    :param dbconn: a :py:mod:`MySQLdb` connection object
+    :param do_query: a function which takes a database cursor as its only argument
+    :param string level: MySQL transaction isolation level
+    :param bool read_only: rollback after the connection
+    """
+    while True:
+        try:
+            try:
+                cursor = dbconn.cursor()
+                cursor.execute('SET TRANSACTION ISOLATION LEVEL ' + level)
+                cursor.execute('START TRANSACTION')
         
-    except:
-        dbconn.rollback()
-        raise
+                result = query(cursor)
+        
+                if read_only:
+                    dbconn.rollback()
+                else:
+                    dbconn.commit()
+        
+                return result
+            except:
+                dbconn.rollback()
+                raise
+        except OperationalError, e:
+            # 1213 is MySQL's code for a deadlock
+            if not e.args[0] == 1213:
+                raise
+
 
 def _check_table_is_a_string(table):
     """Check that table is a string, to avoid cryptic SQL errors"""
@@ -146,7 +163,7 @@ def add(dbconn, table, id_or_ids, updated=False):
         INSERT IGNORE INTO `...` (`id`, `last_updated`)
             VALUES (...), ...
 
-    (`last_updated` is omitted if *updated* is ``False``).
+    (`last_updated` is omitted if *updated* is ``False``.)
     """
     _check_table_is_a_string(table)
 
@@ -154,9 +171,10 @@ def add(dbconn, table, id_or_ids, updated=False):
     if not ids:
         return 0
 
-    with _trans(dbconn) as cursor:
-        _add(cursor, table, ids, updated=updated)
-        return cursor.rowcount
+    def query(cursor):
+        return _add(cursor, table, ids, updated=updated)
+
+    return _run(query, dbconn)
 
 
 def _add(cursor, table, ids, updated=False):
@@ -182,6 +200,7 @@ def _add(cursor, table, ids, updated=False):
            (table, cols, ', '.join(row_sql for _ in ids)))
 
     cursor.execute(sql, ids)
+    return cursor.rowcount
 
 
 def remove(dbconn, table, id_or_ids):
@@ -208,9 +227,11 @@ def remove(dbconn, table, id_or_ids):
     sql = 'DELETE FROM `%s` WHERE `id` IN (%s)' % (
         table, ', '.join('%s' for _ in ids))
 
-    with _trans(dbconn) as cursor:
+    def query(cursor):
         cursor.execute(sql, ids)
         return cursor.rowcount
+
+    return _run(query, dbconn)
 
 
 ### Getting and updating IDs ###
@@ -236,7 +257,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
 
     :return: list of IDs
 
-    Runs these queries in ``REPEATABLE READ`` mode:
+    Runs these queries in ``REPEATABLE READ`` mode, in a single transaction:
 
     .. code-block:: sql
 
@@ -305,12 +326,13 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
                 ' WHERE `id` IN (%s)' %
                 (table, ', '.join('%s' for _ in ids)))
 
-    with _trans(dbconn) as cursor:
+    def query(cursor):
         cursor.execute(select_bumped, [limit])
         ids.extend(row[0] for row in cursor.fetchall())
-
+        
         if len(ids) < limit:
-            cursor.execute(select_unlocked, [min_loop_time, limit - len(ids)])
+            cursor.execute(select_unlocked,
+                           [min_loop_time, limit - len(ids)])
             ids.extend(row[0] for row in cursor.fetchall())
 
         if not ids:
@@ -319,6 +341,8 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
         cursor.execute(update_sql(), [lock_for] + ids)
 
         return ids
+
+    return _run(query, dbconn)
 
 
 def did(dbconn, table, id_or_ids, auto_add=True):
@@ -335,14 +359,18 @@ def did(dbconn, table, id_or_ids, auto_add=True):
 
     :return: number of rows updated (mostly useful as a sanity check)
 
-    Runs this query in ``REPEATABLE READ`` mode:
+    Runs these queries in ``REPEATABLE READ`` mode:
 
     .. code-block:: sql
+
+        INSERT IGNORE INTO `...` (`id`) VALUES (...), ...
 
         UPDATE `...`
             SET `last_updated` = UNIX_TIMESTAMP(),
                 `lock_until` = NULL
             WHERE `id` IN (...)
+
+    (`INSERT IGNORE` is only run if *auto_add* is ``True``.)
     """
     _check_table_is_a_string(table)
 
@@ -355,12 +383,14 @@ def did(dbconn, table, id_or_ids, auto_add=True):
            ' WHERE `id` IN (%s)' % (table,
                                     ', '.join('%s' for _ in ids)))
 
-    with _trans(dbconn) as cursor:
+    def query(cursor):
         if auto_add:
             _add(cursor, table, ids)
-
+                
         cursor.execute(sql, ids)
         return cursor.rowcount
+
+    return _run(query, dbconn)
 
 
 def unlock(dbconn, table, id_or_ids, auto_add=True):
@@ -376,13 +406,16 @@ def unlock(dbconn, table, id_or_ids, auto_add=True):
 
     :return: number of rows updated (mostly useful as a sanity check)
 
-    Runs this query in ``REPEATABLE READ`` mode:
+    Runs these queries in ``REPEATABLE READ`` mode, in separate transactions:
 
     .. code-block:: sql
 
-        UPDATE `...`
-            SET `lock_until` = NULL
+        INSERT IGNORE INTO `...` (`id`) VALUES (...), ...
+
+        UPDATE `...` SET `lock_until` = NULL
             WHERE `id` IN (...)
+
+    (`INSERT IGNORE` is only run if *auto_add* is ``True``)
     """
     _check_table_is_a_string(table)
 
@@ -393,11 +426,11 @@ def unlock(dbconn, table, id_or_ids, auto_add=True):
     sql = ('UPDATE `%s` SET `lock_until` = NULL'
            ' WHERE `id` IN (%s)' % (table, ', '.join('%s' for _ in ids)))
 
-    with _trans(dbconn) as cursor:
+    def query(cursor):
         rowcount = 0
 
-        # newly added rows already have lock_until set to NULL, so these
-        # rows won't get hit by the UPDATE statement below
+        # add to rowcount now, because the UPDATE statement below
+        # won't actually change these new rows
         if auto_add:
             _add(cursor, table, ids)
             rowcount += cursor.rowcount
@@ -406,6 +439,8 @@ def unlock(dbconn, table, id_or_ids, auto_add=True):
         rowcount += cursor.rowcount
 
         return rowcount
+
+    return _run(query, dbconn)
 
 
 ### Prioritization ###
@@ -437,15 +472,19 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True):
 
     :return: number of IDs bumped (mostly useful as a sanity check)
 
-    Runs this query in ``REPEATABLE READ`` mode:
+    Runs these queries in ``REPEATABLE READ`` mode, in separate transactions:
 
     .. code-block:: sql
+
+        INSERT IGNORE INTO `...` (`id`) VALUES (...), ...
 
         UPDATE `...`
             SET `lock_until` = UNIX_TIMESTAMP() + ...
             WHERE (`lock_until` IS NULL OR
                    `lock_until` > UNIX_TIMESTAMP() + ...)
                   AND `id` IN (...)
+
+    (`INSERT IGNORE` is only run if *auto_add* is ``True``)
     """
     _check_table_is_a_string(table)
 
@@ -464,12 +503,11 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True):
            ' AND `id` IN (%s)' %
            (table, ', '.join('%s' for _ in ids)))
 
-    with _trans(dbconn) as cursor:
-        if auto_add:
-            _add(cursor, table, ids)
-
+    def query(cursor):
         cursor.execute(sql, [lock_for, lock_for] + ids)
         return cursor.rowcount
+
+    return _run(query, dbconn)
 
 
 ### Auditing ###
@@ -509,10 +547,12 @@ def check(dbconn, table, id_or_ids):
            ' FROM `%s` WHERE `id` IN (%s)' %
            (table, ', '.join('%s' for _ in ids)))
 
-    with _trans(dbconn, level='READ COMMITTED', read_only=True) as cursor:
+    def query(cursor):
         cursor.execute(sql, ids)
         return dict((id_, (since_updated, locked_for))
                     for id_, since_updated, locked_for in cursor.fetchall())
+
+    return _run(query, dbconn, level='READ COMMITTED', read_only=True)
 
 
 def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
@@ -615,7 +655,7 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
                   ' FROM `%s` WHERE `lock_until` IS NULL'
                   ' AND `last_updated` <= UNIX_TIMESTAMP() - %%s' % table)
 
-    with _trans(dbconn, level='READ UNCOMMITTED', read_only=True) as cursor:
+    def query(cursor):
         r = {} # results to return
 
         cursor.execute(id_sql)
@@ -647,6 +687,8 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
                 r[key] = float(r[key] or 0)
 
         return r
+
+    return _run(query, dbconn, level='READ UNCOMMITTED', read_only=True)
 
 
 ### Object-Oriented version ###
