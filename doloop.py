@@ -271,26 +271,19 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
 
     # order by ID as a tie-breaker, to make tests consistent
 
-    select1 = ('SELECT `id` FROM `%s`'
-               ' WHERE `lock_until` <= UNIX_TIMESTAMP()'
-               ' ORDER BY `lock_until`, `last_updated`, `id`'
-               ' LIMIT %%s'
-               ' FOR UPDATE' % (table,))
+    select_bumped = ('SELECT `id` FROM `%s`'
+                     ' WHERE `lock_until` <= UNIX_TIMESTAMP()'
+                     ' ORDER BY `lock_until`, `last_updated`, `id`'
+                     ' LIMIT %%s'
+                     ' FOR UPDATE' % (table,))
 
-    # TODO: merge select1 and select2
-    select2 = ('SELECT `id` FROM `%s`'
-               ' WHERE `lock_until` IS NULL'
-               ' AND `last_updated` IS NULL'
-               ' ORDER BY `last_updated`, `id`'
-               ' LIMIT %%s'
-               ' FOR UPDATE' % (table,))
-
-    select3 = ('SELECT `id` FROM `%s`'
-               ' WHERE `lock_until` IS NULL'
-               ' AND `last_updated` <= UNIX_TIMESTAMP() - %%s'
-               ' ORDER BY `last_updated`, `id`'
-               ' LIMIT %%s'
-               ' FOR UPDATE' % (table,))
+    select_unlocked = ('SELECT `id` FROM `%s`'
+                       ' WHERE `lock_until` IS NULL'
+                       ' AND (`last_updated` IS NULL'
+                       ' OR `last_updated` <= UNIX_TIMESTAMP() - %%s)'
+                       ' ORDER BY `last_updated`, `id`'
+                       ' LIMIT %%s'
+                       ' FOR UPDATE' % (table,))
 
     ids = []
 
@@ -301,15 +294,11 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
                 (table, ', '.join('%s' for _ in ids)))
 
     with _trans(dbconn) as cursor:
-        cursor.execute(select1, [limit])
+        cursor.execute(select_bumped, [limit])
         ids.extend(row[0] for row in cursor.fetchall())
 
         if len(ids) < limit:
-            cursor.execute(select2, [limit - len(ids)])
-            ids.extend(row[0] for row in cursor.fetchall())
-
-        if len(ids) < limit:
-            cursor.execute(select3, [min_loop_time, limit - len(ids)])
+            cursor.execute(select_unlocked, [min_loop_time, limit - len(ids)])
             ids.extend(row[0] for row in cursor.fetchall())
 
         if not ids:
