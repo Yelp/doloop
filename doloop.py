@@ -48,6 +48,9 @@ ONE_DAY = 60*60*24
 #: One week, in seconds
 ONE_WEEK = 60*60*24*7
 
+# used for retrying on deadlocks
+_MYSQL_DEADLOCK_ERROR_CODE = 1213
+
 
 ### Utils ###
 
@@ -87,8 +90,7 @@ def _run(query, dbconn, level='REPEATABLE READ', read_only=False):
                 dbconn.rollback()
                 raise
         except MySQLdb.OperationalError, e:
-            # 1213 is MySQL's code for a deadlock
-            if not e.args[0] == 1213:
+            if not e.args[0] == _MYSQL_DEADLOCK_ERROR_CODE:
                 raise
 
 
