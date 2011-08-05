@@ -67,9 +67,20 @@ def _run(query, dbconn, level='REPEATABLE READ', read_only=False):
     """Do a query in a transaction, retrying on deadlock.
 
     :param dbconn: a :py:mod:`MySQLdb` connection object
-    :param do_query: a function which takes a database cursor as its only argument
+    :param query: a function which takes a db cursor as its only argument
     :param string level: MySQL transaction isolation level
     :param bool read_only: rollback after the connection
+    """
+    dbconn_query = lambda dbconn: query(dbconn.cursor())
+    return _run_with_dbconn(
+        dbconn_query, dbconn, level=level, read_only=read_only)
+
+
+def _run_with_dbconn(dbconn_query, dbconn, level='REPEATABLE READ', read_only=False):
+    """Like :py:func:`~doloop._run`, except *query* is passed *dbconn*
+    rather than a cursor.
+
+    Useful if you need to roll back in the middle of the query.
     """
     while True:
         try:
@@ -78,7 +89,7 @@ def _run(query, dbconn, level='REPEATABLE READ', read_only=False):
                 cursor.execute('SET TRANSACTION ISOLATION LEVEL ' + level)
                 cursor.execute('START TRANSACTION')
         
-                result = query(cursor)
+                result = dbconn_query(dbconn)
         
                 if read_only:
                     dbconn.rollback()
@@ -249,17 +260,21 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
     * First, fetch IDs which are locked but whose locks have expired. Starting with the ones that have been locked the longest.
     * Then, fetch unlocked IDs. Start with those that have *never* been updated, then fetch the ones that have gone the longest without being updated.
 
-    (Note that this means that the ``lock_until`` column can also be used to prioritize IDs; see :py:func:`bump`.)
+    Ties are broken by ordering by ID.
+
+    Note that because IDs whose locks have expired are selected first, the
+    ``lock_until`` column can also be used to prioritize IDs; see
+    :py:func:`bump`.
 
     :param dbconn: a :py:mod:`MySQLdb` connection object
     :param str table: name of your task loop table
     :param int limit: max number of IDs to fetch
-    :param lock_for: a conservative upper bound for how long we expect to take to update this ID, in seconds. Default is one hour. Must be positive
+    :param lock_for: a conservative upper bound for how long we expect to take to update this ID, in seconds. Default is one hour. Must be positive.
     :param min_loop_time: If a job is unlocked, make sure it was last updated at least this many seconds ago, so that we don't spin on the same IDs.
 
     :return: list of IDs
 
-    Runs these queries in ``REPEATABLE READ`` mode, in a single transaction:
+    Runs these queries in ``REPEATABLE READ`` mode:
 
     .. code-block:: sql
 
@@ -279,6 +294,10 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
 
         UPDATE `...` SET `lock_until` = UNIX_TIMESTAMP() + ...
             WHERE `id` IN (...)
+
+    If the first query returns no rows, we roll back before continuing to
+    avoid holding on to a gap lock (we only need to lock actual rows).
+    Otherwise, all three queries are run in a single transaction.
     """
     _check_table_is_a_string(table)
 
@@ -324,12 +343,19 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
                 ' WHERE `id` IN (%s)' %
                 (table, ', '.join('%s' for _ in ids)))
 
-    def query(cursor):
+    def dbconn_query(dbconn):
+        cursor = dbconn.cursor()
+        
         ids = []
         
         cursor.execute(select_bumped, [limit])
         ids.extend(row[0] for row in cursor.fetchall())
-        
+
+        # if there are no locked IDs (the common case), don't hold on to
+        # the gap lock; we only need to lock actual rows
+        if not ids:
+            dbconn.rollback()
+
         if len(ids) < limit:
             cursor.execute(select_unlocked,
                            [min_loop_time, limit - len(ids)])
@@ -342,7 +368,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
 
         return ids
 
-    return _run(query, dbconn)
+    return _run_with_dbconn(dbconn_query, dbconn)
 
 
 def did(dbconn, table, id_or_ids, auto_add=True):
