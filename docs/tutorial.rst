@@ -22,9 +22,8 @@ want to separately update users' profile pages and their friend
 recommendations, you'd want two tables, named something like 
 ``user_profile_loop`` and ``user_friend_loop``.
 
-By default, :py:mod:`doloop` assumes IDs are ``INTs``, but you can
-actually use any column type that can be a primary key. For example,
-if your IDs are 64-character ASCII strings:
+By default, :py:mod:`doloop` assumes IDs are ``INTs``, but you can use any 
+column type that can be a primary key. For example, if your IDs are 64-character ASCII strings:
 
 .. code-block:: sh
 
@@ -48,8 +47,8 @@ You'll also want to add a call to :py:func:`doloop.add` to your user creation
 code. :py:func:`doloop.add` uses ``INSERT IGNORE``, so it's fine to call 
 it several times for the same ID.
 
-Each call to :py:func:`doloop.add` does a database transaction, so it's 
-actually much more efficient to add chunks of several IDs at a time::
+Each call to :py:func:`doloop.add` does a database transaction, so it's much 
+more efficient to add chunks of several IDs at a time::
 
     for list_of_user_ids in ...:
         doloop.add(dbconn, 'user_loop', list_of_user_ids)
