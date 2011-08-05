@@ -45,6 +45,62 @@ WHITESPACE_RE = re.compile('\s+')
 
 MAX_MYSQLD_STARTUP_TIME = 15
 
+# This is the exception through on deadlock, which we should recover from
+DEADLOCK_EXC = MySQLdb.OperationalError(
+    1213, 'Deadlock found when trying to get lock; try restarting transaction')
+
+# This is a real error that can happen if your innodb_buffer_pool_size is too
+# low or if you get() too many IDs at once. It's not recoverable.
+OTHER_EXC = MySQLdb.OperationalError(
+    1206, 'The total number of locks exceeds the lock table size')
+
+
+class ExceptionRaisingDbConnWrapper(object):
+
+    def __init__(self, dbconn):
+        self._dbconn = dbconn
+        # an exception to raise on calls to execute()
+        self._exc = None
+        # countdown of # of calls to execute() before self._exc() is raised
+        self._num_queries_to_exc = 0
+
+    def raise_exception_after_queries(self, exc, num_queries_to_exc):
+        self._num_queries_to_exc = num_queries_to_exc
+        self._exc = exc
+
+    def maybe_raise_exception(self):
+        if not self._exc:
+            return
+
+        self._num_queries_to_exc -= 1
+
+        if self._num_queries_to_exc <= 0:
+            self._num_queries_to_exc = 0
+            exc = self._exc
+            self._exc = None
+            raise exc
+
+    def cursor(self):
+        return ExceptionRaisingCursorWrapper(self._dbconn.cursor(), self)
+
+    def __getattr__(self, attr):
+        return getattr(self._dbconn, attr)
+
+
+class ExceptionRaisingCursorWrapper(object):
+    
+    def __init__(self, cursor, dbconn_wrapper):
+        self._cursor = cursor
+        self._dbconn_wrapper = dbconn_wrapper
+
+    def execute(self, *args, **kwargs):
+        self._dbconn_wrapper.maybe_raise_exception()
+        return self._cursor.execute(*args, **kwargs)
+
+    def __getattr__(self, attr):
+        return getattr(self._cursor, attr)
+   
+
 class DoLoopTestCase(TestCase):
 
     # we put all these tests in the same TestCase so we 
@@ -103,7 +159,7 @@ class DoLoopTestCase(TestCase):
         log.info('deleting %s' % self.mysql_dir)
         shutil.rmtree(self.mysql_dir)
 
-    def make_dbconn(self):
+    def make_dbconn(self, raw=False):
         return MySQLdb.connect(unix_socket=self.mysql_socket, db='doloop')
 
     def create_doloop(self, table='loop', id_type='INT'):
@@ -112,6 +168,13 @@ class DoLoopTestCase(TestCase):
         dbconn = self.make_dbconn()
         doloop.create(dbconn, table, id_type)
         return doloop.DoLoop(dbconn, table)
+
+    def create_doloop_and_wrapped_dbconn(self, table='loop', id_type='INT'):
+        """Create a loop table in the `doloop` database, and return
+        an object wrapping it. By default, this table will be named `loop`"""
+        dbconn = ExceptionRaisingDbConnWrapper(self.make_dbconn())
+        doloop.create(dbconn, table, id_type)
+        return doloop.DoLoop(dbconn, table), dbconn
 
     @setup
     def create_empty_doloop_db(self):
@@ -334,6 +397,22 @@ class DoLoopTestCase(TestCase):
 
         assert_raises(TypeError, loop.get, 10, min_loop_time=None)
         assert_raises(TypeError, loop.get, 10, min_loop_time=[1, 2, 3])
+
+    def test_get_works_correctly_on_deadlock(self):
+        loop, dbconn = self.create_doloop_and_wrapped_dbconn()
+
+        loop.add(range(10, 25))
+
+        dbconn.raise_exception_after_queries(DEADLOCK_EXC, 4)
+        assert_equal(loop.get(10), range(10, 20))
+
+    def test_get_lets_other_errors_through(self):
+        loop, dbconn = self.create_doloop_and_wrapped_dbconn()
+
+        loop.add(range(10, 25))
+
+        dbconn.raise_exception_after_queries(OTHER_EXC, 4)
+        assert_raises(MySQLdb.OperationalError, loop.get, 10)
 
 
     ### tests for did() ###
