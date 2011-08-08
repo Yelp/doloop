@@ -11,19 +11,23 @@ if not earlier.
 You'll also want to install the package 
 `python-MySQL <http://mysql-python.sourceforge.net/>`_.
 
-Next, you'll want to create at least one table:
+Next, you'll want to create at least one doloop table:
 
 .. code-block:: sh
 
     create-doloop-table user_loop | mysql -D test # or a db of your choice
 
-You'll want one table per kind of update on kind of thing. For example, if you 
-want to separately update users' profile pages and their friend 
-recommendations, you'd want two tables, named something like 
+This table is used to keep track of what IDs we care about, and how recently 
+they've been updated. You'll want one table per kind of update on kind of 
+thing.
+
+For example, if you want to separately update users' profile pages and their 
+friend recommendations, you'd want two tables, named something like 
 ``user_profile_loop`` and ``user_friend_loop``.
 
 By default, :py:mod:`doloop` assumes IDs are ``INTs``, but you can use any 
-column type that can be a primary key. For example, if your IDs are 64-character ASCII strings:
+column type that can be a primary key. For example, if your IDs are 
+64-character ASCII strings:
 
 .. code-block:: sh
 
@@ -36,7 +40,8 @@ You can also create tables programmatically using :py:func:`doloop.create` and
 Adding and removing IDs
 -----------------------
 
-Use :py:func:`doloop.add` to add IDs::
+Next, you'll want to make sure the IDs of the things you want to keep updated 
+are in your doloop table. Use :py:func:`doloop.add` to add them::
 
     dbconn = MySQLdb.connection(...)
 
@@ -85,13 +90,17 @@ good idea for your update code to gracefully handle nonexistent IDs.
 How many workers you want and when they run is up to you. If 
 there turn out not to be enough workers, things will simply be updated less 
 often than you'd like. You *can* set a limit on how frequently the same ID 
-will be updated; by default, this is one hour.
+will be updated using the *min_loop_time* argument to 
+:py:func:`~doloop.get`; by default, this is one hour.
 
 Also, don't worry too much about your workers crashing. By default, IDs are 
-locked for an hour, so they'll eventually get unlocked and fetched by 
+locked for an hour (also configurable, with the *lock_for* argument to 
+:py:func:`~doloop.get`), so they'll eventually get unlocked and fetched by 
 another worker. Conversely, if there is a problem ID that always causes a 
-crash, that problem ID won't bother your workers for another hour. You can 
-also explicitly unlock IDs with :py:func:`doloop.unlock`.
+crash, that problem ID won't bother your workers for another hour.
+
+You can also explicitly unlock IDs, without marking them as updated, using 
+:py:func:`doloop.unlock`.
 
 
 Prioritization
