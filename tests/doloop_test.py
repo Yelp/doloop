@@ -64,8 +64,8 @@ class ExceptionRaisingDbConnWrapper(object):
         # countdown of # of calls to execute() before self._exc() is raised
         self._num_queries_to_exc = 0
 
-    def raise_exception_after_queries(self, exc, num_queries_to_exc):
-        self._num_queries_to_exc = num_queries_to_exc
+    def raise_exception_later(self, exc, num_queries):
+        self._num_queries_to_exc = num_queries
         self._exc = exc
 
     def maybe_raise_exception(self):
@@ -88,7 +88,7 @@ class ExceptionRaisingDbConnWrapper(object):
 
 
 class ExceptionRaisingCursorWrapper(object):
-    
+
     def __init__(self, cursor, dbconn_wrapper):
         self._cursor = cursor
         self._dbconn_wrapper = dbconn_wrapper
@@ -99,11 +99,11 @@ class ExceptionRaisingCursorWrapper(object):
 
     def __getattr__(self, attr):
         return getattr(self._cursor, attr)
-   
+
 
 class DoLoopTestCase(TestCase):
 
-    # we put all these tests in the same TestCase so we 
+    # we put all these tests in the same TestCase so we
 
     @class_setup
     def start_mysql_daemon(self):
@@ -192,7 +192,7 @@ class DoLoopTestCase(TestCase):
         dbconn = self.make_dbconn()
 
         # check that loops with different name are in fact distinct
-        
+
         doloop.create(dbconn, 'foo_loop')
         foo_loop = doloop.DoLoop(dbconn, 'foo_loop')
 
@@ -254,17 +254,17 @@ class DoLoopTestCase(TestCase):
 
         assert_equal(loop.get(10), [42])
         assert_equal(loop.add(42), 0) # already added
-        
+
         assert_equal(loop.add([42, 43]), 1) # 1 already added
         assert_equal(loop.get(10), [43])
-        
-        assert_equal(loop.add(set([43, 44, 45])), 2) # 1 already added 
+
+        assert_equal(loop.add(set([43, 44, 45])), 2) # 1 already added
         assert_equal(loop.get(10), [44, 45])
 
     def test_add_updated(self):
         loop = self.create_doloop()
         assert_equal(loop.add([42, 43], updated=True), 2)
-        
+
         assert_equal(loop.get(10), [])
 
         # if we ignore update time, we can get the IDs, once
@@ -275,6 +275,21 @@ class DoLoopTestCase(TestCase):
     def test_add_table_must_be_a_string(self):
         assert_raises(TypeError,
                       doloop.add, self.make_dbconn(), 999, 'foo_loop')
+
+    def test_add_recovers_correctly_from_deadlocks(self):
+        loop, dbconn = self.create_doloop_and_wrapped_dbconn()
+
+        dbconn.raise_exception_later(DEADLOCK_EXC, num_queries=3)
+
+        assert_equal(loop.add(42), 1)
+        assert_equal(loop.get(10), [42])
+
+    def test_add_lets_other_errors_through(self):
+        loop, dbconn = self.create_doloop_and_wrapped_dbconn()
+
+        dbconn.raise_exception_later(OTHER_EXC, num_queries=3)
+
+        assert_raises(MySQLdb.OperationalError, loop.add, 42)
 
 
     ### tests for remove() ###
@@ -301,6 +316,26 @@ class DoLoopTestCase(TestCase):
                       doloop.remove, self.make_dbconn(), 999, 'foo_loop')
 
 
+    def test_remove_recovers_correctly_from_deadlocks(self):
+        loop, dbconn = self.create_doloop_and_wrapped_dbconn()
+
+        loop.add(range(10, 15))
+
+        dbconn.raise_exception_later(DEADLOCK_EXC, num_queries=3)
+
+        assert_equal(loop.remove([10, 12]), 2)
+        assert_equal(loop.get(10), [11, 13, 14])
+
+    def test_remove_lets_other_errors_through(self):
+        loop, dbconn = self.create_doloop_and_wrapped_dbconn()
+
+        loop.add(range(10, 15))
+
+        dbconn.raise_exception_later(OTHER_EXC, num_queries=3)
+
+        assert_raises(MySQLdb.OperationalError, loop.remove, [10, 12])
+
+
     ### tests for get() ###
 
     def test_get_from_empty(self):
@@ -319,7 +354,7 @@ class DoLoopTestCase(TestCase):
     def test_get_min_loop_time(self):
         loop = self.create_doloop()
         loop.add(range(10, 15))
-       
+
         ids = loop.get(10)
         assert_equal(ids, range(10, 15))
 
@@ -368,13 +403,13 @@ class DoLoopTestCase(TestCase):
 
         loop.get(10, lock_for=20)
         loop.get(10, lock_for=20.5)
-        
+
         assert_raises(ValueError, loop.get, 10, lock_for=-600)
         assert_raises(ValueError, loop.get, 10, lock_for=0)
 
         assert_raises(TypeError, loop.get, 10, lock_for=None)
         assert_raises(TypeError, loop.get, 10, lock_for=[1, 2, 3])
-       
+
     def test_get_limit_must_be_a_nonnegative_integer(self):
         loop = self.create_doloop()
 
@@ -382,7 +417,7 @@ class DoLoopTestCase(TestCase):
         loop.get(0)
 
         assert_raises(ValueError, loop.get, -1)
-        
+
         assert_raises(TypeError, loop.get, 34.5)
         assert_raises(TypeError, loop.get, 24.0)
         assert_raises(TypeError, loop.get, None)
@@ -398,12 +433,12 @@ class DoLoopTestCase(TestCase):
         assert_raises(TypeError, loop.get, 10, min_loop_time=None)
         assert_raises(TypeError, loop.get, 10, min_loop_time=[1, 2, 3])
 
-    def test_get_works_correctly_on_deadlock(self):
+    def test_get_recovers_correctly_from_deadlocks(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
 
         loop.add(range(10, 25))
 
-        dbconn.raise_exception_after_queries(DEADLOCK_EXC, 4)
+        dbconn.raise_exception_later(DEADLOCK_EXC, num_queries=4)
         assert_equal(loop.get(10), range(10, 20))
 
     def test_get_lets_other_errors_through(self):
@@ -411,7 +446,7 @@ class DoLoopTestCase(TestCase):
 
         loop.add(range(10, 25))
 
-        dbconn.raise_exception_after_queries(OTHER_EXC, 4)
+        dbconn.raise_exception_later(OTHER_EXC, num_queries=4)
         assert_raises(MySQLdb.OperationalError, loop.get, 10)
 
 
@@ -446,6 +481,27 @@ class DoLoopTestCase(TestCase):
         assert_raises(TypeError,
                       doloop.did, self.make_dbconn(), 999, 'foo_loop')
 
+    def test_did_recovers_correctly_from_deadlocks(self):
+        loop, dbconn = self.create_doloop_and_wrapped_dbconn()
+        loop.add(range(10, 20))
+
+        dbconn.raise_exception_later(DEADLOCK_EXC, num_queries=4)
+
+        # test auto_add as well
+        assert_equal(loop.did([11, 13, 15, 17, 19, 1]), 6)
+
+        assert_equal(loop.get(10, min_loop_time=0),
+                     [10, 12, 14, 16, 18, 1, 11, 13, 15, 17])
+
+    def test_did_lets_other_errors_through(self):
+        loop, dbconn = self.create_doloop_and_wrapped_dbconn()
+        loop.add(range(10, 20))
+
+        dbconn.raise_exception_later(OTHER_EXC, num_queries=4)
+
+        assert_raises(MySQLdb.OperationalError,
+                      loop.did, [11, 13, 15, 17, 19, 1])
+
 
     ### tests for unlock() ###
 
@@ -473,7 +529,7 @@ class DoLoopTestCase(TestCase):
         # try unlocking just one ID
         assert_equal(loop.unlock(7), 1)
         assert_equal(loop.get(10), [7])
-        
+
     def test_unlock_auto_add(self):
         loop = self.create_doloop()
 
@@ -485,6 +541,12 @@ class DoLoopTestCase(TestCase):
 
         assert_equal(loop.get(10), [111, 222])
 
+    def test_unlock_recovers_correctly_from_deadlocks(self):
+        loop, dbconn = self.create_doloop_and_wrapped_dbconn()
+
+        loop.add(111)
+        assert_equal(loop.unlock([111, 222]), 1) # 111 already added
+        # TODO: continue here
 
     ### tests for bump() ###
 
@@ -512,7 +574,7 @@ class DoLoopTestCase(TestCase):
         time.sleep(2.1)
         assert_equal(loop.bump(17, lock_for=4), 0) # don't re-bump
         assert_equal(loop.get(1), [11]) # 17 is bumped but locked
-       
+
         time.sleep(2)
         assert_equal(loop.get(1), [17]) # lock on 17 has expired
 
@@ -532,7 +594,7 @@ class DoLoopTestCase(TestCase):
     def test_bump_min_loop_time_must_be_a_number(self):
         loop = self.create_doloop()
         loop.add(17)
-    
+
         loop.bump(17, lock_for=20)
         loop.bump(17, lock_for=20.5)
         loop.bump(17, lock_for=0)
@@ -621,7 +683,7 @@ class DoLoopTestCase(TestCase):
         loop.bump(12)
         loop.bump(13, lock_for=60)
         loop.bump([14, 15], lock_for=-60)
-        
+
         stats = loop.stats(delay_thresholds=(1, 10))
 
         assert_equal(stats['locked'], 2) # 10 and 13
@@ -637,7 +699,7 @@ class DoLoopTestCase(TestCase):
         assert_lte(stats['min_lock_time'], 60)
         assert_gte(stats['max_lock_time'], ONE_HOUR-6) # 10
         assert_lte(stats['max_lock_time'], ONE_HOUR-1)
-        
+
         assert_gte(stats['min_bump_time'], 0) # 12
         assert_lte(stats['min_bump_time'], 5)
         assert_gte(stats['max_bump_time'], 60) # 14 and 15
@@ -656,7 +718,7 @@ class DoLoopTestCase(TestCase):
                 assert isinstance(value, float), 'expected stats[%r] to be a float, not %r' % (key, value)
             elif key != 'delayed':
                 assert isinstance(value, (int, long)), 'expected stats[%r] to be an integer, not %r' % (key, value)
-                           
+
     def test_stats_table_must_be_a_string(self):
         assert_raises(TypeError,
                       doloop.stats, 'foo_loop', self.make_dbconn())
@@ -667,12 +729,12 @@ class DoLoopTestCase(TestCase):
         loop.stats(delay_thresholds=(1, 10, 100))
         loop.stats(delay_thresholds=set([1000, 10000]))
         loop.stats(delay_thresholds=[1234.5]) # float is okay
-        
+
         loop.stats(delay_thresholds=()) # empty is okay
-        
+
         stats = loop.stats(delay_thresholds=100000) # single value is okay
         assert_equal(sorted(stats['delayed']), [100000])
-        
+
         stats = loop.stats(delay_thresholds={1: 2, 3: 4}) # dict is okay
         assert_equal(sorted(stats['delayed']), [1, 3])
 
