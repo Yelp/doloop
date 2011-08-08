@@ -30,6 +30,7 @@ Documentation
    tutorial.rst
    functions.rst
    wrapper.rst
+   scripts.rst
    utilities.rst
 
 
