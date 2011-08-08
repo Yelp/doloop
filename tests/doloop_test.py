@@ -258,8 +258,13 @@ class DoLoopTestCase(TestCase):
         assert_equal(loop.add([42, 43]), 1) # 1 already added
         assert_equal(loop.get(10), [43])
 
+        # test sets
         assert_equal(loop.add(set([43, 44, 45])), 2) # 1 already added
         assert_equal(loop.get(10), [44, 45])
+
+        # test tuples
+        assert_equal(loop.add((46, 47, 48)), 3)
+        assert_equal(loop.get(10), [46, 47, 48])
 
     def test_add_updated(self):
         loop = self.create_doloop()

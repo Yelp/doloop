@@ -32,7 +32,7 @@ Run one or more workers (e.g in a crontab), with code like this::
 from __future__ import with_statement
 
 __author__ = 'David Marin <dave@yelp.com>'
-__version__ = '0.1'
+__version__ = '0.1.0'
 
 import sys
 
@@ -55,7 +55,7 @@ _MYSQL_DEADLOCK_ERROR_CODE = 1213
 ### Utils ###
 
 def _to_list(x):
-    if isinstance(x, (list, tuple)):
+    if isinstance(x, list):
         return x
     elif hasattr(x, '__iter__'):
         return list(x)
