@@ -35,8 +35,6 @@ from __future__ import with_statement
 __author__ = 'David Marin <dave@yelp.com>'
 __version__ = '0.1.0'
 
-import sys
-
 import MySQLdb
 import MySQLdb.constants.ER
 
@@ -49,6 +47,10 @@ ONE_DAY = 60*60*24
 #: One week, in seconds
 ONE_WEEK = 60*60*24*7
 
+_RECOVERABLE_MYSQL_ERROR_CODES = (
+    MySQLdb.constants.ER.LOCK_DEADLOCK,
+    MySQLdb.constants.ER.LOCK_WAIT_TIMEOUT,
+)
 
 ### Utils ###
 
@@ -61,24 +63,25 @@ def _to_list(x):
         return [x]
 
 
-def _run(query, dbconn, level='REPEATABLE READ', read_only=False, retry_on_deadlock=True):
-    """Do a query in a transaction, retrying on deadlock.
+def _run(query, dbconn, level='REPEATABLE READ', read_only=False, retry=True):
+    """Do a query in a transaction.
 
     :param dbconn: a :py:mod:`MySQLdb` connection object
     :param query: a function which takes a db cursor as its only argument
     :param string level: MySQL transaction isolation level
     :param bool read_only: rollback after the transaction
-    :param bool retry_on_deadlock: if we encounter a deadlock, try again
+    :param bool retry: retry on deadlock or lock wait timeout
 
     If there is already a transaction in progress (i.e. you're using
     *dbconn* for non-:py:mod:`doloop` things), it'll be rolled back.
     """
     return _run_with_rollbacks(lambda cursor, _: query(cursor),
                                dbconn, level=level, read_only=read_only,
-                               retry_on_deadlock=retry_on_deadlock)
+                               retry=retry)
 
 
-def _run_with_rollbacks(query, dbconn, level='REPEATABLE READ', read_only=False, retry_on_deadlock=True):
+def _run_with_rollbacks(query, dbconn, level='REPEATABLE READ',
+                        read_only=False, retry=True):
     """Like :py:func:`~doloop._run`, except query takes an additional
     argument which is a function that can be called to roll back and restart
     the transaction.
@@ -108,8 +111,7 @@ def _run_with_rollbacks(query, dbconn, level='REPEATABLE READ', read_only=False,
                 dbconn.rollback()
                 raise
         except MySQLdb.OperationalError, e:
-            if not (retry_on_deadlock and
-                    e.args[0] == MySQLdb.constants.ER.LOCK_DEADLOCK):
+            if not (retry and e.args[0] in _RECOVERABLE_MYSQL_ERROR_CODES):
                 raise
 
 
@@ -177,7 +179,8 @@ def add(dbconn, table, id_or_ids, updated=False):
 
     :return: number of IDs that are new
 
-    Runs this query in ``REPEATABLE READ`` mode, retrying on deadlocks:
+    Runs this query in ``REPEATABLE READ`` mode, retrying on deadlock or lock
+    wait timeout:
 
     .. code-block:: sql
 
@@ -233,7 +236,8 @@ def remove(dbconn, table, id_or_ids):
 
     :return: number of IDs removed
 
-    Runs this query in ``REPEATABLE READ`` mode, retrying on deadlocks:
+    Runs this query in ``REPEATABLE READ`` mode, retrying on deadlock or lock
+    wait timeout:
 
     .. code-block:: sql
 
@@ -282,7 +286,8 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
 
     :return: list of IDs
 
-    Runs these queries in ``REPEATABLE READ`` mode, retrying on deadlocks:
+    Runs this query in ``REPEATABLE READ`` mode, retrying on deadlock or lock
+    wait timeout:
 
     .. code-block:: sql
 
@@ -391,7 +396,8 @@ def did(dbconn, table, id_or_ids, auto_add=True):
 
     :return: number of rows updated (mostly useful as a sanity check)
 
-    Runs these queries in ``REPEATABLE READ`` mode, retrying on deadlocks:
+    Runs this query in ``REPEATABLE READ`` mode, retrying on deadlock or lock
+    wait timeout:
 
     .. code-block:: sql
 
@@ -438,7 +444,8 @@ def unlock(dbconn, table, id_or_ids, auto_add=True):
 
     :return: number of rows updated (mostly useful as a sanity check)
 
-    Runs these queries in ``REPEATABLE READ`` mode, retrying on deadlocks:
+    Runs this query in ``REPEATABLE READ`` mode, retrying on deadlock or lock
+    wait timeout:
 
     .. code-block:: sql
 
@@ -504,7 +511,8 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True):
 
     :return: number of IDs bumped (mostly useful as a sanity check)
 
-    Runs these queries in ``REPEATABLE READ`` mode, retrying on deadlocks:
+    Runs this query in ``REPEATABLE READ`` mode, retrying on deadlock or lock
+    wait timeout:
 
     .. code-block:: sql
 
@@ -559,7 +567,8 @@ def check(dbconn, table, id_or_ids):
 
     This function does not require write access to your database.
 
-    Runs this query in ``READ COMMITTED`` mode, retrying on deadlocks:
+    Runs this query in ``REPEATABLE READ`` mode, retrying on deadlock or lock
+    wait timeout:
 
     .. code-block:: sql
 
@@ -726,7 +735,7 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
     # "transaction", it doesn't acquire any locks. Just easier to do it this
     # way than to write separate database logic for this one function.
     return _run(query, dbconn, level='READ UNCOMMITTED', read_only=True,
-                retry_on_deadlock=False)
+                retry=False)
 
 
 ### Object-Oriented version ###
