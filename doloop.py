@@ -720,6 +720,9 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
 
         return r
 
+    # we're running in READ UNCOMMITTED mode, so even though this is a single
+    # "transaction", it doesn't acquire any locks. Just easier to do it this
+    # way than to write separate database logic for this one function.
     return _run(query, dbconn, level='READ UNCOMMITTED', read_only=True)
 
 
