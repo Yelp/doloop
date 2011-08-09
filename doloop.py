@@ -70,32 +70,39 @@ def _run(query, dbconn, level='REPEATABLE READ', read_only=False):
     :param query: a function which takes a db cursor as its only argument
     :param string level: MySQL transaction isolation level
     :param bool read_only: rollback after the connection
+
+    If there is already a transaction in progress (i.e. you're using
+    *dbconn* for non-:py:mod:`doloop` things), it'll be rolled back.
     """
-    dbconn_query = lambda dbconn: query(dbconn.cursor())
-    return _run_with_dbconn(
-        dbconn_query, dbconn, level=level, read_only=read_only)
+    return _run_with_rollbacks(lambda cursor, _: query(cursor),
+                               dbconn, level=level, read_only=read_only)
 
 
-def _run_with_dbconn(dbconn_query, dbconn, level='REPEATABLE READ', read_only=False):
-    """Like :py:func:`~doloop._run`, except *query* is passed *dbconn*
-    rather than a cursor.
-
-    Useful if you need to roll back in the middle of the query.
+def _run_with_rollbacks(query, dbconn, level='REPEATABLE READ', read_only=False):
+    """Like :py:func:`~doloop._run`, except query takes an additional
+    argument which is a function that can be called to roll back and restart
+    the transaction.
     """
+    def rollback_and_restart_transaction():
+        dbconn.rollback()
+
+        cursor = dbconn.cursor()
+        cursor.execute('SET TRANSACTION ISOLATION LEVEL ' + level)
+        cursor.execute('START TRANSACTION')
+
     while True:
         try:
             try:
-                cursor = dbconn.cursor()
-                cursor.execute('SET TRANSACTION ISOLATION LEVEL ' + level)
-                cursor.execute('START TRANSACTION')
-        
-                result = dbconn_query(dbconn)
-        
+                rollback_and_restart_transaction()
+
+                result = query(
+                    dbconn.cursor(), rollback_and_restart_transaction)
+
                 if read_only:
                     dbconn.rollback()
                 else:
                     dbconn.commit()
-        
+
                 return result
             except:
                 dbconn.rollback()
@@ -306,7 +313,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
 
     if not lock_for > 0:
         raise ValueError('lock_for must be positive, not %d' % (lock_for,))
-    
+
     if not isinstance(min_loop_time, (int, long, float)):
         raise TypeError('min_loop_time must be a number, not %r' %
                         (min_loop_time,))
@@ -343,18 +350,16 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
                 ' WHERE `id` IN (%s)' %
                 (table, ', '.join('%s' for _ in ids)))
 
-    def dbconn_query(dbconn):
-        cursor = dbconn.cursor()
-        
+    def query(cursor, rollback_and_restart_transaction):
         ids = []
-        
+
         cursor.execute(select_bumped, [limit])
         ids.extend(row[0] for row in cursor.fetchall())
 
         # if there are no locked IDs (the common case), don't hold on to
         # the gap lock; we only need to lock actual rows
         if not ids:
-            dbconn.rollback()
+            rollback_and_restart_transaction()
 
         if len(ids) < limit:
             cursor.execute(select_unlocked,
@@ -368,7 +373,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
 
         return ids
 
-    return _run_with_dbconn(dbconn_query, dbconn)
+    return _run_with_rollbacks(query, dbconn)
 
 
 def did(dbconn, table, id_or_ids, auto_add=True):
@@ -412,7 +417,7 @@ def did(dbconn, table, id_or_ids, auto_add=True):
     def query(cursor):
         if auto_add:
             _add(cursor, table, ids)
-                
+
         cursor.execute(sql, ids)
         return cursor.rowcount
 
@@ -617,7 +622,7 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
 
         SELECT MIN(`id`), MAX(`id`) FROM `...`
 
-        SELECT COUNT(*), 
+        SELECT COUNT(*),
                MIN(`lock_until`) - UNIX_TIMESTAMP(),
                MAX(`lock_until`) - UNIX_TIMESTAMP()
             FROM `...`
@@ -694,11 +699,11 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
         cursor.execute(bumped_sql)
         r['bumped'], r['min_bump_time'], r['max_bump_time'] = (
             cursor.fetchall()[0])
-        
+
         cursor.execute(updated_sql)
         r['updated'], r['min_update_time'], r['max_update_time'] = (
             cursor.fetchall()[0])
-        
+
         cursor.execute(new_sql)
         r['new'] = cursor.fetchall()[0][0]
 
