@@ -28,6 +28,7 @@ Run one or more workers (e.g in a crontab), with code like this::
         ...
 
     doloop.did(dbconn, 'foo_loop', foo_ids)
+
 """
 from __future__ import with_statement
 
@@ -176,7 +177,7 @@ def add(dbconn, table, id_or_ids, updated=False):
 
     :return: number of IDs that are new
 
-    Runs this query in ``REPEATABLE READ`` mode:
+    Runs this query in ``REPEATABLE READ`` mode, retrying on deadlocks:
 
     .. code-block:: sql
 
@@ -232,7 +233,7 @@ def remove(dbconn, table, id_or_ids):
 
     :return: number of IDs removed
 
-    Runs this query in ``REPEATABLE READ`` mode:
+    Runs this query in ``REPEATABLE READ`` mode, retrying on deadlocks:
 
     .. code-block:: sql
 
@@ -281,7 +282,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
 
     :return: list of IDs
 
-    Runs these queries in ``REPEATABLE READ`` mode:
+    Runs these queries in ``REPEATABLE READ`` mode, retrying on deadlocks:
 
     .. code-block:: sql
 
@@ -390,7 +391,7 @@ def did(dbconn, table, id_or_ids, auto_add=True):
 
     :return: number of rows updated (mostly useful as a sanity check)
 
-    Runs these queries in ``REPEATABLE READ`` mode:
+    Runs these queries in ``REPEATABLE READ`` mode, retrying on deadlocks:
 
     .. code-block:: sql
 
@@ -437,7 +438,7 @@ def unlock(dbconn, table, id_or_ids, auto_add=True):
 
     :return: number of rows updated (mostly useful as a sanity check)
 
-    Runs these queries in ``REPEATABLE READ`` mode, in separate transactions:
+    Runs these queries in ``REPEATABLE READ`` mode, retrying on deadlocks:
 
     .. code-block:: sql
 
@@ -503,7 +504,7 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True):
 
     :return: number of IDs bumped (mostly useful as a sanity check)
 
-    Runs these queries in ``REPEATABLE READ`` mode, in separate transactions:
+    Runs these queries in ``REPEATABLE READ`` mode, retrying on deadlocks:
 
     .. code-block:: sql
 
@@ -556,7 +557,7 @@ def check(dbconn, table, id_or_ids):
 
     This function does not require write access to your database.
 
-    Runs this query in ``READ COMMITTED`` mode:
+    Runs this query in ``READ COMMITTED`` mode, retrying on deadlocks:
 
     .. code-block:: sql
 
