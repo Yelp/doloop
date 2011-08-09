@@ -15,7 +15,8 @@
 
 Basic usage:
 
-Use :py:func:`~doloop.create` to create task loop tables. You should have one table for each kind of updating you want to do.
+Use :py:func:`~doloop.create` to create task loop tables. You should have one
+table for each kind of updating you want to do.
 
 Add the IDs of things you want to update with :py:func:`~doloop.add`.
 
@@ -39,18 +40,19 @@ import MySQLdb
 import MySQLdb.constants.ER
 
 #: One hour, in seconds
-ONE_HOUR = 60*60
+ONE_HOUR = 60 * 60
 
 #: One day, in seconds
-ONE_DAY = 60*60*24
+ONE_DAY = 60 * 60 * 24
 
 #: One week, in seconds
-ONE_WEEK = 60*60*24*7
+ONE_WEEK = 60 * 60 * 24 * 7
 
 _RECOVERABLE_MYSQL_ERROR_CODES = (
     MySQLdb.constants.ER.LOCK_DEADLOCK,
     MySQLdb.constants.ER.LOCK_WAIT_TIMEOUT,
 )
+
 
 ### Utils ###
 
@@ -136,13 +138,20 @@ def create(dbconn, table, id_type='INT'):
             INDEX (`lock_until`, `last_updated`)
         ) ENGINE=InnoDB
 
-    * *id* is the ID of the thing you want to update. It can refer to anything that has a unique ID (doesn't need to be another table in this database). It also need not be an ``INT``; see *id_type*, below.
-    * *last_updated*: a unix timestamp; when the thing was last updated, or ``NULL`` if it never was
-    * *lock_until* is also a unix timestamp. It's used to keep workers from grabbing the same IDs, and prioritization. See :py:func:`~doloop.get` for details.
+    * *id* is the ID of the thing you want to update. It can refer to anything
+      that has a unique ID (doesn't need to be another table in this database).
+      It also need not be an ``INT``; see *id_type*, below.
+    * *last_updated*: a unix timestamp; when the thing was last updated, or
+      ``NULL`` if it never was
+    * *lock_until* is also a unix timestamp. It's used to keep workers from
+      grabbing the same IDs, and prioritization. See :py:func:`~doloop.get`
+      for details.
 
     :param dbconn: a :py:mod:`MySQLdb` connection object
-    :param str table: name of your task loop table. Something ending in ``_loop`` is recommended.
-    :param str id_type: alternate type for the ``id`` field (e.g. ``'VARCHAR(64)``')
+    :param str table: name of your task loop table. Something ending in
+                      ``_loop`` is recommended.
+    :param str id_type: alternate type for the ``id`` field (e.g.
+                        ``'VARCHAR(64)``')
 
     There is no ``drop()`` function because programmatically dropping tables
     is risky. The relevant SQL is just ``DROP TABLE `...```.
@@ -154,7 +163,9 @@ def create(dbconn, table, id_type='INT'):
 def sql_for_create(table, id_type='INT'):
     """Get SQL used by :py:func:`create`.
 
-    Useful to power :command:`create-doloop-table` (included with this package), which you can use to pipe ``CREATE`` statements into :command:`mysql`.
+    Useful to power :command:`create-doloop-table` (included with this
+    package), which you can use to pipe ``CREATE`` statements into
+    :command:`mysql`.
     """
     _check_table_is_a_string(table)
 
@@ -175,7 +186,9 @@ def add(dbconn, table, id_or_ids, updated=False):
     :param dbconn: a :py:mod:`MySQLdb` connection object
     :param str table: name of your task loop table
     :param id_or_ids: ID or list of IDs to add
-    :param updated: Set this to true if these IDs have already been updated; this will ``last_updated`` to the current time rather than ``NULL``.
+    :param updated: Set this to true if these IDs have already been updated;
+                    this will ``last_updated`` to the current time rather than
+                    ``NULL``.
 
     :return: number of IDs that are new
 
@@ -208,7 +221,8 @@ def _add(cursor, table, ids, updated=False):
     :param dbconn: a :py:mod:`MySQLdb` connection object
     :param str table: name of your task loop table
     :param id_or_ids: ID or list of IDs to add
-    :param updated: Set ``last_updated`` to the current time rather than ``NULL``.
+    :param updated: Set ``last_updated`` to the current time rather than
+                    ``NULL``.
     """
     assert ids
     assert isinstance(ids, list)
@@ -269,8 +283,11 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
 
     The rules for fetching IDs are:
 
-    * First, fetch IDs which are locked but whose locks have expired. Starting with the ones that have been locked the longest.
-    * Then, fetch unlocked IDs. Start with those that have *never* been updated, then fetch the ones that have gone the longest without being updated.
+    * First, fetch IDs which are locked but whose locks have expired. Start
+      with the ones that have been locked the longest.
+    * Then, fetch unlocked IDs. Start with those that have *never* been
+      updated, then fetch the ones that have gone the longest without being
+      updated.
 
     Ties are broken by ordering by ID.
 
@@ -281,8 +298,12 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
     :param dbconn: a :py:mod:`MySQLdb` connection object
     :param str table: name of your task loop table
     :param int limit: max number of IDs to fetch
-    :param lock_for: a conservative upper bound for how long we expect to take to update this ID, in seconds. Default is one hour. Must be positive.
-    :param min_loop_time: If a job is unlocked, make sure it was last updated at least this many seconds ago, so that we don't spin on the same IDs.
+    :param lock_for: a conservative upper bound for how long we expect to take
+                     to update this ID, in seconds. Default is one hour. Must
+                     be positive.
+    :param min_loop_time: If a job is unlocked, make sure it was last updated
+                          at least this many seconds ago, so that we don't spin
+                          on the same IDs.
 
     :return: list of IDs
 
@@ -312,6 +333,8 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
     avoid holding on to a gap lock (we only need to lock actual rows).
     Otherwise, all three queries are run in a single transaction.
     """
+    # do type-checking up front, to avoid cryptic MySQL errors
+
     _check_table_is_a_string(table)
 
     if not isinstance(lock_for, (int, long, float)):
@@ -330,6 +353,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
     if not limit >= 0:
         raise ValueError('limit must not be negative, was %r' % (limit,))
 
+    # bail out if no rows requested
 
     if limit == 0:
         return []
@@ -616,10 +640,17 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
     number of IDs in that category, plus these additional keys:
 
     * **min_id**/**max_id**: min and max IDs (or ``None`` if table is empty)
-    * **min_lock_time**/**max_lock_time**: min/max times that any ID is locked for
-    * **min_bump_time**/**max_bump_time**: min/max times that any ID has been prioritized (``lock_until`` now or in the past)
-    * **min_update_time**/**max_update_time**: min/max times that an unlocked ID has gone since being updated
-    * **delayed**: map from number of seconds to the number of unlocked IDs where the last time they were updated was at least that long ago. Default thresholds are one day and one week; you can control these with *delay_thresholds*
+    * **min_lock_time**/**max_lock_time**: min/max number of seconds that any
+      ID is locked for
+    * **min_bump_time**/**max_bump_time**: min/max number of seconds that any
+      ID has been prioritized (``lock_until`` now or in the past)
+    * **min_update_time**/**max_update_time**: min/max number of seconds that
+      an unlocked ID has gone since being updated
+    * **delayed**: map from number of seconds to the number of unlocked IDs
+      where the last time they were updated was at least that long ago (we
+      don't include IDs that have never been updated). Default thresholds are
+      :py:data:`~doloop.ONE_DAY` and :py:data:`~doloop.ONE_WEEK`; you can
+      control these with *delay_thresholds*
 
     For convenience and readability, all times will be floating point numbers.
     If there are no IDs in a particular category, the time will be ``0.0``,
@@ -699,7 +730,7 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
                   ' AND `last_updated` <= UNIX_TIMESTAMP() - %%s' % table)
 
     def query(cursor):
-        r = {} # results to return
+        r = {}  # results to return
 
         cursor.execute(id_sql)
         r['min_id'], r['max_id'] = cursor.fetchall()[0]
@@ -760,7 +791,10 @@ class DoLoop(object):
     def __init__(self, dbconn, table):
         """Wrap a task loop table in an object
 
-        :param dbconn: a :py:mod:`MySQLdb` connection object, or a callable that returns one (since it's kind of lame to store raw DB connections)
+        :param dbconn: a :py:mod:`MySQLdb` connection object, or a callable
+                       that returns one. If you use a callable, it'll be called
+                       *every time* a method is called on this object (put any
+                       caching/pooling/etc. inside your callable)
         :param string table: name of your task loop table
 
         You can read (but not change) the table name by calling ``self.table``
@@ -834,4 +868,3 @@ class DoLoop(object):
         See :py:func:`~doloop.stats` for details.
         """
         return stats(self._make_dbconn(), self._table, delay_thresholds)
-

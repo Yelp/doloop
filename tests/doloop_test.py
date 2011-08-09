@@ -122,14 +122,13 @@ class DoLoopTestCase(TestCase):
             '--skip-grant-tables',
             '--skip-networking',
 
-            # these are all innodb/mysql options that reduce the safety of MySQL
-            # in the case of disk problems, but don't affect locking or general
-            # correctness.
-            '--innodb_flush_log_at_trx_commit=0', # don't issue fsyncs
-            '--innodb_buffer_pool_size=128M',     # bumped up from default of 8M
-            '--innodb_fast_shutdown=2',           # do less work on shutdown
-            '--skip-innodb_checksums',            # don't do extra checksums
-            '--sync-binlog=0',                    # don't fsync binlogs
+            # these are all innodb/mysql options that reduce the safety of
+            # MySQL in the case of disk problems, but don't affect locking or
+            # general correctness.
+            '--innodb_flush_log_at_trx_commit=0',  # don't issue fsyncs
+            '--innodb_fast_shutdown=2',            # do less work on shutdown
+            '--skip-innodb_checksums',             # don't do extra checksums
+            '--sync-binlog=0',                     # don't fsync binlogs
         ]
 
         log.info('started mysqld in %s' % self.mysql_dir)
@@ -215,10 +214,10 @@ class DoLoopTestCase(TestCase):
 
         ci_loop = self.create_doloop('ci_loop', id_type=id_type)
         ci_loop.add(['aaa', 'Bbb'])
-        assert_equal(ci_loop.add('AAA'), 0) # already added as "aaa"
+        assert_equal(ci_loop.add('AAA'), 0)  # already added as "aaa"
 
         assert_equal(ci_loop.get(10), ['aaa', 'Bbb'])
-        assert_equal(ci_loop.unlock('BBB'), 1) # "BBB" and "Bbb" are the same
+        assert_equal(ci_loop.unlock('BBB'), 1)  # "BBB" and "Bbb" are the same
         assert_equal(ci_loop.get(10), ['Bbb'])
 
         # Python dicts can't handle the case-insensitivity
@@ -268,13 +267,13 @@ class DoLoopTestCase(TestCase):
         assert_equal(loop.add(42), 1)
 
         assert_equal(loop.get(10), [42])
-        assert_equal(loop.add(42), 0) # already added
+        assert_equal(loop.add(42), 0)  # already added
 
-        assert_equal(loop.add([42, 43]), 1) # 1 already added
+        assert_equal(loop.add([42, 43]), 1)  # 1 already added
         assert_equal(loop.get(10), [43])
 
         # test sets
-        assert_equal(loop.add(set([43, 44, 45])), 2) # 1 already added
+        assert_equal(loop.add(set([43, 44, 45])), 2)  # 1 already added
         assert_equal(loop.get(10), [44, 45])
 
         # test tuples
@@ -330,11 +329,11 @@ class DoLoopTestCase(TestCase):
         loop = self.create_doloop()
         loop.add(range(10, 15))
 
-        assert_equal(loop.remove(10), 1) # remove one
+        assert_equal(loop.remove(10), 1)  # remove one
         assert_equal(loop.remove(10), 0)
-        assert_equal(loop.remove([11, 13]), 2) # remove a list
+        assert_equal(loop.remove([11, 13]), 2)  # remove a list
         assert_equal(loop.remove([11, 13]), 0)
-        assert_equal(loop.remove(set([11, 12, 13])), 1) # remove a set
+        assert_equal(loop.remove(set([11, 12, 13])), 1)  # remove a set
         assert_equal(loop.remove(set([11, 12, 13])), 0)
 
         assert_equal(loop.get(10), [14])
@@ -419,10 +418,10 @@ class DoLoopTestCase(TestCase):
 
         loop.add(range(10, 20))
         loop.did(19)
-        time.sleep(1.1) # make sure UNIX_TIMESTAMP() changes
+        time.sleep(1.1)  # make sure UNIX_TIMESTAMP() changes
         loop.did(13)
         loop.bump([14, 17])
-        loop.bump([15, 11], lock_for=ONE_HOUR) # lock for an hour
+        loop.bump([15, 11], lock_for=ONE_HOUR)  # lock for an hour
         loop.bump([16, 12], lock_for=-ONE_HOUR)
 
         # first get the stuff that was super-bumped, then the stuff
@@ -465,7 +464,7 @@ class DoLoopTestCase(TestCase):
         loop.get(10, min_loop_time=20)
         loop.get(10, min_loop_time=20.5)
         loop.get(10, min_loop_time=0)
-        loop.get(10, min_loop_time=-11.1) # negative is okay
+        loop.get(10, min_loop_time=-11.1)  # negative is okay
 
         assert_raises(TypeError, loop.get, 10, min_loop_time=None)
         assert_raises(TypeError, loop.get, 10, min_loop_time=[1, 2, 3])
@@ -506,8 +505,8 @@ class DoLoopTestCase(TestCase):
 
         loop.add(range(10, 20))
         assert_equal(loop.did(11), 1)
-        time.sleep(1.1) # make sure UNIX_TIMESTAMP() changes
-        assert_equal(loop.did([11, 13, 15, 17, 19]), 5) # 11 is updated again
+        time.sleep(1.1)  # make sure UNIX_TIMESTAMP() changes
+        assert_equal(loop.did([11, 13, 15, 17, 19]), 5)  # 11 is updated again
 
         assert_equal(loop.get(10), [10, 12, 14, 16, 18])
 
@@ -516,9 +515,9 @@ class DoLoopTestCase(TestCase):
 
         assert_equal(loop.get(10), [])
 
-        assert_equal(loop.did(111), 1) # 111 auto-added
+        assert_equal(loop.did(111), 1)  # 111 auto-added
         loop.add(222)
-        assert_equal(loop.did([222, 333], auto_add=False), 1) # no row for 333
+        assert_equal(loop.did([222, 333], auto_add=False), 1)  # no row for 333
 
         assert_equal(loop.get(10, min_loop_time=0), [111, 222])
 
@@ -576,7 +575,7 @@ class DoLoopTestCase(TestCase):
         loop.add(range(10, 20))
         ids = loop.get(5)
         assert_equal(loop.unlock(ids), 5)
-        assert_equal(loop.unlock(ids), 0) # already unlocked
+        assert_equal(loop.unlock(ids), 0)  # already unlocked
 
         # unlocking doesn't re-prioritize the IDs since it doesn't touch
         # last_updated
@@ -593,8 +592,8 @@ class DoLoopTestCase(TestCase):
         assert_equal(loop.get(10), [])
 
         loop.add(111)
-        assert_equal(loop.unlock([111, 222]), 1) # 111 already added
-        assert_equal(loop.unlock(333, auto_add=False), 0) # no row for 333
+        assert_equal(loop.unlock([111, 222]), 1)  # 111 already added
+        assert_equal(loop.unlock(333, auto_add=False), 0)  # no row for 333
 
         assert_equal(loop.get(10), [111, 222])
 
@@ -602,32 +601,32 @@ class DoLoopTestCase(TestCase):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
 
         loop.add(111)
-        assert_equal(loop.unlock([111, 222]), 1) # 111 already added
-        loop.bump(222) # lock 222
+        assert_equal(loop.unlock([111, 222]), 1)  # 111 already added
+        loop.bump(222)  # lock 222
 
         dbconn.raise_exception_later(DEADLOCK_EXC, num_queries=3)
 
-        assert_equal(loop.unlock([111, 222, 333]), 2) # 222 unlocked, 333 new
+        assert_equal(loop.unlock([111, 222, 333]), 2)  # 222 unlocked, 333 new
         assert_equal(loop.get(10), [111, 222, 333])
 
     def test_unlock_recovers_correctly_from_lock_wait_timeout(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
 
         loop.add(111)
-        assert_equal(loop.unlock([111, 222]), 1) # 111 already added
-        loop.bump(222) # lock 222
+        assert_equal(loop.unlock([111, 222]), 1)  # 111 already added
+        loop.bump(222)  # lock 222
 
         dbconn.raise_exception_later(LOCK_WAIT_TIMEOUT_EXC, num_queries=3)
 
-        assert_equal(loop.unlock([111, 222, 333]), 2) # 222 unlocked, 333 new
+        assert_equal(loop.unlock([111, 222, 333]), 2)  # 222 unlocked, 333 new
         assert_equal(loop.get(10), [111, 222, 333])
 
     def test_unlock_lets_other_errors_through(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
 
         loop.add(111)
-        assert_equal(loop.unlock([111, 222]), 1) # 111 already added
-        loop.bump(222) # lock 222
+        assert_equal(loop.unlock([111, 222]), 1)  # 111 already added
+        loop.bump(222)  # lock 222
 
         dbconn.raise_exception_later(OTHER_EXC, num_queries=3)
 
@@ -645,8 +644,8 @@ class DoLoopTestCase(TestCase):
         loop.add(range(10, 20))
 
         assert_equal(loop.bump(19), 1)
-        assert_equal(loop.bump([17, 12], lock_for=-10), 2) # super-bump
-        assert_equal(loop.bump([13, 18], lock_for=10), 2) # bump but lock
+        assert_equal(loop.bump([17, 12], lock_for=-10), 2)  # super-bump
+        assert_equal(loop.bump([13, 18], lock_for=10), 2)  # bump but lock
 
         assert_equal(loop.get(5), [12, 17, 19, 10, 11])
 
@@ -655,22 +654,22 @@ class DoLoopTestCase(TestCase):
         loop.add(range(10, 20))
 
         assert_equal(loop.bump(17, lock_for=4), 1)
-        assert_equal(loop.get(1), [10]) # 17 is bumped but locked
+        assert_equal(loop.get(1), [10])  # 17 is bumped but locked
 
         time.sleep(2.1)
-        assert_equal(loop.bump(17, lock_for=4), 0) # don't re-bump
-        assert_equal(loop.get(1), [11]) # 17 is bumped but locked
+        assert_equal(loop.bump(17, lock_for=4), 0)  # don't re-bump
+        assert_equal(loop.get(1), [11])  # 17 is bumped but locked
 
         time.sleep(2)
-        assert_equal(loop.get(1), [17]) # lock on 17 has expired
+        assert_equal(loop.get(1), [17])  # lock on 17 has expired
 
     def test_bump_auto_add(self):
         loop = self.create_doloop()
         loop.add(range(10, 20))
 
-        assert_equal(loop.bump([7, 17]), 2) # 7 is auto-added
+        assert_equal(loop.bump([7, 17]), 2)  # 7 is auto-added
         assert_equal(loop.bump([19, 25], lock_for=-10, auto_add=False),
-                     1) # no row for 25
+                     1)  # no row for 25
         assert_equal(loop.get(5), [19, 7, 17, 10, 11])
 
     def test_bump_table_must_be_a_string(self):
@@ -684,7 +683,7 @@ class DoLoopTestCase(TestCase):
         loop.bump(17, lock_for=20)
         loop.bump(17, lock_for=20.5)
         loop.bump(17, lock_for=0)
-        loop.bump(17, lock_for=-11.1) # negative is okay
+        loop.bump(17, lock_for=-11.1)  # negative is okay
 
         assert_raises(TypeError, loop.bump, 17, lock_for=None)
         assert_raises(TypeError, loop.bump, 17, lock_for=[1, 2, 3])
@@ -733,7 +732,7 @@ class DoLoopTestCase(TestCase):
         assert_equal(loop.check(10), {10: (None, None)})
         assert_equal(loop.check([18, 19]), {18: (None, None),
                                             19: (None, None)})
-        assert_equal(loop.check(20), {}) # 20 doesn't exist
+        assert_equal(loop.check(20), {})  # 20 doesn't exist
         assert_equal(loop.check([18, 19, 20]), {18: (None, None),
                                                 19: (None, None)})
 
@@ -747,7 +746,7 @@ class DoLoopTestCase(TestCase):
         # allow 2 seconds of wiggle room
         since_updated_10, locked_for_10 = id_to_status[10]
         assert_equal(since_updated_10, None)
-        assert_gte(locked_for_10, ONE_HOUR-2)
+        assert_gte(locked_for_10, ONE_HOUR - 2)
         assert_lte(locked_for_10, ONE_HOUR)
 
         since_updated_11, locked_for_11 = id_to_status[11]
@@ -805,7 +804,8 @@ class DoLoopTestCase(TestCase):
             'new': 0,
             'min_id': None,
             'max_id': None,
-            'min_lock_time': 0.0, # times are 0.0, not None, for convenience
+            # times are 0.0, not None, for convenience
+            'min_lock_time': 0.0,
             'max_lock_time': 0.0,
             'min_bump_time': 0.0,
             'max_bump_time': 0.0,
@@ -820,45 +820,45 @@ class DoLoopTestCase(TestCase):
 
         assert_equal(loop.get(1), [10])
         loop.did(11)
-        time.sleep(1.1) # wait for 11 to be at least 1 sec old
+        time.sleep(1.1)  # wait for 11 to be at least 1 sec old
         loop.bump(12)
         loop.bump(13, lock_for=60)
         loop.bump([14, 15], lock_for=-60)
 
         stats = loop.stats(delay_thresholds=(1, 10))
 
-        assert_equal(stats['locked'], 2) # 10 and 13
-        assert_equal(stats['bumped'], 3) # 12, 14, and 15
-        assert_equal(stats['updated'], 1) # 11
-        assert_equal(stats['new'], 4) # 16-19
+        assert_equal(stats['locked'], 2)  # 10 and 13
+        assert_equal(stats['bumped'], 3)  # 12, 14, and 15
+        assert_equal(stats['updated'], 1)  # 11
+        assert_equal(stats['new'], 4)  # 16-19
 
         assert_equal(stats['min_id'], 10)
         assert_equal(stats['max_id'], 19)
 
         # allow five seconds of wiggle room
-        assert_gte(stats['min_lock_time'], 55) # 13
+        assert_gte(stats['min_lock_time'], 55)  # 13
         assert_lte(stats['min_lock_time'], 60)
-        assert_gte(stats['max_lock_time'], ONE_HOUR-6) # 10
-        assert_lte(stats['max_lock_time'], ONE_HOUR-1)
+        assert_gte(stats['max_lock_time'], ONE_HOUR - 6)  # 10
+        assert_lte(stats['max_lock_time'], ONE_HOUR - 1)
 
-        assert_gte(stats['min_bump_time'], 0) # 12
+        assert_gte(stats['min_bump_time'], 0)  # 12
         assert_lte(stats['min_bump_time'], 5)
-        assert_gte(stats['max_bump_time'], 60) # 14 and 15
+        assert_gte(stats['max_bump_time'], 60)  # 14 and 15
         assert_lte(stats['max_bump_time'], 65)
 
-        assert_gte(stats['min_update_time'], 1) # 10
+        assert_gte(stats['min_update_time'], 1)  # 10
         assert_lte(stats['min_update_time'], 6)
-        assert_gte(stats['max_update_time'], 1) # 10
+        assert_gte(stats['max_update_time'], 1)  # 10
         assert_lte(stats['max_update_time'], 6)
 
-        assert_equal(stats['delayed'], {1: 1, 10: 0}) # 11
+        assert_equal(stats['delayed'], {1: 1, 10: 0})  # 11
 
         # check types
         for key, value in stats.iteritems():
             if key.endswith('_time'):
-                assert isinstance(value, float), 'expected stats[%r] to be a float, not %r' % (key, value)
+                assert isinstance(value, float)
             elif key != 'delayed':
-                assert isinstance(value, (int, long)), 'expected stats[%r] to be an integer, not %r' % (key, value)
+                assert isinstance(value, (int, long))
 
     def test_stats_table_must_be_a_string(self):
         assert_raises(TypeError,
@@ -869,14 +869,14 @@ class DoLoopTestCase(TestCase):
 
         loop.stats(delay_thresholds=(1, 10, 100))
         loop.stats(delay_thresholds=set([1000, 10000]))
-        loop.stats(delay_thresholds=[1234.5]) # float is okay
+        loop.stats(delay_thresholds=[1234.5])  # float is okay
 
-        loop.stats(delay_thresholds=()) # empty is okay
+        loop.stats(delay_thresholds=())  # empty is okay
 
-        stats = loop.stats(delay_thresholds=100000) # single value is okay
+        stats = loop.stats(delay_thresholds=100000)  # single value is okay
         assert_equal(sorted(stats['delayed']), [100000])
 
-        stats = loop.stats(delay_thresholds={1: 2, 3: 4}) # dict is okay
+        stats = loop.stats(delay_thresholds={1: 2, 3: 4})  # dict is okay
         assert_equal(sorted(stats['delayed']), [1, 3])
 
         assert_raises(TypeError, loop.stats, delay_thresholds=[[1, 2, 3]])
