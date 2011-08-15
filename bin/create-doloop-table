@@ -1,0 +1,78 @@
+#!/usr/bin/env python
+
+# Copyright 2011 Yelp
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# please keep this docstring in sync with docs/scripts.rst
+""":command:`create-doloop-table` prints out ``CREATE TABLE`` statements for
+one or more doloop tables (which track how recently IDs were updated).
+
+Sample usage:
+
+.. code-block:: sh
+
+    create-doloop-table user_loop | mysql -D test # or a db of your choice
+
+which would pipe into :command:`mysql` something like this:
+
+.. code-block:: sql
+
+    CREATE TABLE `user_loop` (
+        `id` INT NOT NULL,
+        `last_updated` INT DEFAULT NULL,
+        `lock_until` INT DEFAULT NULL,
+        PRIMARY KEY (`id`),
+        INDEX (`lock_until`, `last_updated`)
+    ) ENGINE=InnoDB
+
+You can set the type of the ``id`` column to something other than ``INT``
+with the ``-i`` option; e.g.:
+
+.. code-block:: sh
+
+    create-doloop-table -i 'CHAR(64) CHARSET ascii' user_loop | mysql -D test
+"""
+import optparse
+import sys
+
+import doloop
+
+
+def main(args):
+    parser = make_option_parser()
+    options, tables = parser.parse_args()
+
+    if not tables:
+        parser.print_help()
+        sys.exit(0)
+
+    for table in args:
+        print doloop.sql_for_create(table, id_type=options.id_type) + ';'
+        print
+
+
+def make_option_parser():
+    usage = '%prog [options] table [table ...] | mysql -D dbname'
+    description = ('Print SQL to create one or more task loop tables.')
+    parser = optparse.OptionParser(usage=usage, description=description)
+
+    parser.add_option(
+        '-i', '--id-type', dest='id_type', default='INT',
+        help='Type for the ID field (default: %default)')
+
+    return parser
+
+
+if __name__ == '__main__':
+    main(sys.argv[1:])
