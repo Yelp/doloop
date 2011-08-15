@@ -1,0 +1,8 @@
+.#*
+*.pyc
+*~
+*.swp
+
+build
+dist
+doloop.egg-info
