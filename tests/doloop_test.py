@@ -858,7 +858,11 @@ class DoLoopTestCase(TestCase):
             if key.endswith('_time'):
                 assert isinstance(value, float)
             elif key != 'delayed':
-                assert isinstance(value, (int, long))
+                assert isinstance(value, int)
+
+        for threshold, amount in stats['delayed'].iteritems():
+            assert isinstance(threshold, float)
+            assert isinstance(amount, int)
 
     def test_stats_table_must_be_a_string(self):
         assert_raises(TypeError,

@@ -752,13 +752,16 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
 
         r['delayed'] = {}
         for threshold in delay_thresholds:
+            threshold = float(threshold)
             cursor.execute(delayed_sql, [threshold])
-            r['delayed'][threshold] = cursor.fetchall()[0][0]
+            r['delayed'][threshold] = int(cursor.fetchall()[0][0])
 
         # make sure times are always floats
         for key in r:
             if key.endswith('_time'):
-                r[key] = float(r[key] or 0)
+                r[key] = float(r[key] or 0.0)
+            if isinstance (r[key], long):
+                r[key] = int(r[key])
 
         return r
 
