@@ -630,41 +630,45 @@ def stats(dbconn, table, delay_thresholds=None):
     :param str table: name of your task loop table
     :param delay_thresholds: enables the *delayed* stat; see below
 
-    This breaks down IDs into four categories:
-
-    * **locked**: ``lock_until`` is some time in the future
-    * **bumped**: ``lock_until`` is now or some time in the past.
-    * **updated**: ``lock_until`` is ``NULL`` and ``last_updated`` is set
-    * **new**: both ``lock_until`` and ``last_updated`` are ``NULL``
-
-    It returns a dictionary mapping the name of each of these categories to the
-    number of IDs in that category, plus these additional keys:
-
+    It returns a dictionary containing these keys:
+    * **bumped**: number of IDs where ``lock_until`` is now or in the past
+    * **delayed**: maps thresholds specified in *delay_thresholds*, which
+      are numbers of seconds, to the number of IDs that were updated at least
+      that long ago. If *delay_thresholds* is not set, this is ``{}``.
+    * **locked**: number of IDs where ``lock_until`` is in the future
+    * **min_bump_time**/**max_bump_time**: min/max number of seconds that any
+      ID has been prioritized (``lock_until`` now or in the past)
     * **min_id**/**max_id**: min and max IDs (or ``None`` if table is empty)
     * **min_lock_time**/**max_lock_time**: min/max number of seconds that any
       ID is locked for
-    * **min_bump_time**/**max_bump_time**: min/max number of seconds that any
-      ID has been prioritized (``lock_until`` now or in the past)
     * **min_update_time**/**max_update_time**: min/max number of seconds that
       an unlocked ID has gone since being updated
-    * **delayed**: map from number of seconds to the number of unlocked IDs
-      where the last time they were updated was at least that long ago (we
-      don't include IDs that have never been updated). Default thresholds are
-      :py:data:`~doloop.ONE_DAY` and :py:data:`~doloop.ONE_WEEK`; you can
-      control these with *delay_thresholds*
-
+    * **new**: number of IDs where ``last_updated`` is ``NULL``
+    * **total**: total number of IDs
+    * **updated**: number of IDs where ``last_updated`` is not ``NULL``
+    
     For convenience and readability, all times will be floating point numbers.
-    If there are no IDs in a particular category, the time will be ``0.0``,
-    not ``None``.
+
+    Only *min_id* and *max_id* can be ``None`` (when the table is empty).
+    Everything else defaults to zero.
 
     This function does not require write access to your database.
 
     Don't be surprised if you see minor discrepancies; this function runs
-    several separate queries in ``READ UNCOMMITTED`` mode:
+    four separate queries in ``READ UNCOMMITTED`` mode:
 
     .. code-block:: sql
 
         SELECT MIN(`id`), MAX(`id`) FROM `...`
+
+        SELECT COUNT(*),
+               SUM(IF(`last_updated` IS NULL, 1, 0)),
+               UNIX_TIMESTAMP() - MIN(`last_updated`),
+               UNIX_TIMESTAMP() - MAX(`last_updated`),
+               SUM(IF(`last_updated` <= UNIX_TIMESTAMP() - ..., 1, 0)),
+               SUM(IF(`last_updated` <= UNIX_TIMESTAMP() - ..., 1, 0)),
+               ...
+               FROM `...`
 
         SELECT COUNT(*),
                MIN(`lock_until`) - UNIX_TIMESTAMP(),
@@ -677,23 +681,6 @@ def stats(dbconn, table, delay_thresholds=None):
                UNIX_TIMESTAMP() - MIN(`lock_until`)
             FROM `...`
             WHERE `lock_until` <= UNIX_TIMESTAMP()
-
-        SELECT COUNT(*),
-               UNIX_TIMESTAMP() - MAX(`last_updated`),
-               UNIX_TIMESTAMP() - MIN(`last_updated`)
-            FROM `...`
-            WHERE `lock_until` IS NULL
-                  AND `last_updated` IS NOT NULL
-
-         SELECT COUNT(*)
-             FROM `...`
-             WHERE `lock_until` IS NULL
-                   AND `last_updated` IS NULL
-
-         SELECT COUNT(*)
-             FROM `...`
-             WHERE `lock_until` IS NULL
-                   AND `last_updated` <= UNIX_TIMESTAMP() - ...
     """
     _check_table_is_a_string(table)
 
