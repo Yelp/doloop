@@ -798,6 +798,7 @@ class DoLoopTestCase(TestCase):
         stats = loop.stats()
 
         assert_equal(stats, {
+            'total': 0,
             'locked': 0,
             'bumped': 0,
             'updated': 0,
@@ -819,23 +820,24 @@ class DoLoopTestCase(TestCase):
         loop.add(range(10, 20))
 
         assert_equal(loop.get(1), [10])
-        loop.did(11)
-        time.sleep(1.1)  # wait for 11 to be at least 1 sec old
+        loop.did([11, 12])
+        time.sleep(1.1)  # wait for 11, 12 to be at least 1 sec old
         loop.bump(12)
         loop.bump(13, lock_for=60)
         loop.bump([14, 15], lock_for=-60)
 
         stats = loop.stats(delay_thresholds=(1, 10))
 
-        assert_equal(stats['locked'], 2)  # 10 and 13
-        assert_equal(stats['bumped'], 3)  # 12, 14, and 15
-        assert_equal(stats['updated'], 1)  # 11
-        assert_equal(stats['new'], 4)  # 16-19
+        assert_equal(stats['total'], 10) # 10-19
+        assert_equal(stats['locked'], 2) # 10 and 13
+        assert_equal(stats['bumped'], 3) # 12, 14, and 15
+        assert_equal(stats['updated'], 2) # 11, 12
+        assert_equal(stats['new'], 8)  # 13-19
 
         assert_equal(stats['min_id'], 10)
         assert_equal(stats['max_id'], 19)
 
-        # allow five seconds of wiggle room
+        # this test should work even if it experienced up to 5 seconds of delay
         assert_gte(stats['min_lock_time'], 55)  # 13
         assert_lte(stats['min_lock_time'], 60)
         assert_gte(stats['max_lock_time'], ONE_HOUR - 6)  # 10
@@ -851,7 +853,7 @@ class DoLoopTestCase(TestCase):
         assert_gte(stats['max_update_time'], 1)  # 10
         assert_lte(stats['max_update_time'], 6)
 
-        assert_equal(stats['delayed'], {1: 1, 10: 0})  # 11
+        assert_equal(stats['delayed'], {1: 2, 10: 0})  # 11, 12
 
         # check types
         for key, value in stats.iteritems():

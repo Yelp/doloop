@@ -36,6 +36,7 @@ from __future__ import with_statement
 __author__ = 'David Marin <dave@yelp.com>'
 __version__ = '0.2.0-dev'
 
+from decimal import Decimal
 import MySQLdb
 import MySQLdb.constants.ER
 
@@ -135,7 +136,7 @@ def create(dbconn, table, id_type='INT'):
             `last_updated` INT DEFAULT NULL,
             `lock_until` INT DEFAULT NULL,
             PRIMARY KEY (`id`),
-            INDEX (`lock_until`, `last_updated`)
+            KEY `lock_until` (`lock_until`, `last_updated`)
         ) ENGINE=InnoDB
 
     * *id* is the ID of the thing you want to update. It can refer to anything
@@ -174,7 +175,7 @@ def sql_for_create(table, id_type='INT'):
     `last_updated` INT default NULL,
     `lock_until` INT default NULL,
     PRIMARY KEY (`id`),
-    INDEX (`lock_until`, `last_updated`)
+    KEY `lock_until` (`lock_until`, `last_updated`)
 ) ENGINE=InnoDB""" % (table, id_type)
 
 
@@ -622,12 +623,12 @@ def check(dbconn, table, id_or_ids):
     return _run(query, dbconn, level='READ COMMITTED', read_only=True)
 
 
-def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
+def stats(dbconn, table, delay_thresholds=None):
     """Get stats on the performance of the task loop as a whole.
 
     :param dbconn: a :py:mod:`MySQLdb` connection object
     :param str table: name of your task loop table
-    :param delay_thresholds: controls the *delayed* stat; see below
+    :param delay_thresholds: enables the *delayed* stat; see below
 
     This breaks down IDs into four categories:
 
@@ -696,15 +697,32 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
     """
     _check_table_is_a_string(table)
 
-    delay_thresholds = _to_list(delay_thresholds)
+    delay_thresholds = _to_list(delay_thresholds or ())
 
     for threshold in delay_thresholds:
         if not isinstance(threshold, (int, long, float)):
             raise TypeError('delay_thresholds must be numbers, not %r' %
                             (threshold,))
 
-    id_sql = ('SELECT MIN(`id`), MAX(`id`) FROM `%s`' % table)
+    id_sql = 'SELECT MIN(`id`), MAX(`id`) FROM `%s`' % table
 
+    delay_sql = ', SUM(IF(`last_updated` <= UNIX_TIMESTAMP() - %s, 1, 0))'
+
+    # put all the stats that require scanning over the
+    # (`lock_until`, `last_updated`) covering index in the same query
+    updated_sql = ('SELECT COUNT(*),'
+                    # new
+                    ' SUM(IF(`last_updated` IS NULL, 1, 0)),'
+                    # updated
+                    ' UNIX_TIMESTAMP() - MIN(`last_updated`),'
+                    ' UNIX_TIMESTAMP() - MAX(`last_updated`)' +
+                    # delayed
+                    delay_sql * len(delay_thresholds) +
+                    ' FROM `%s`' % table)
+
+    # "locked" and "bumped" queries are cheaper to handle separately;
+    # usually this is a small minority of rows, and this saves us from having
+    # to do another SUM(IF(...)) over the entire table
     locked_sql = ('SELECT COUNT(*), '
                   ' MIN(`lock_until`) - UNIX_TIMESTAMP(),'
                   ' MAX(`lock_until`) - UNIX_TIMESTAMP()'
@@ -714,26 +732,23 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
                   ' UNIX_TIMESTAMP() - MAX(`lock_until`),'
                   ' UNIX_TIMESTAMP() - MIN(`lock_until`)'
                   ' FROM `%s` WHERE `lock_until` <= UNIX_TIMESTAMP()' % table)
-
-    updated_sql = ('SELECT COUNT(*),'
-                  ' UNIX_TIMESTAMP() - MAX(`last_updated`),'
-                  ' UNIX_TIMESTAMP() - MIN(`last_updated`)'
-                  ' FROM `%s` WHERE `lock_until` IS NULL'
-                  ' AND `last_updated` IS NOT NULL' % table)
-
-    new_sql = ('SELECT COUNT(*)'
-               ' FROM `%s` WHERE `lock_until` IS NULL'
-               ' AND `last_updated` IS NULL' % table)
-
-    delayed_sql = ('SELECT COUNT(*)'
-                  ' FROM `%s` WHERE `lock_until` IS NULL'
-                  ' AND `last_updated` <= UNIX_TIMESTAMP() - %%s' % table)
-
+    
     def query(cursor):
         r = {}  # results to return
 
         cursor.execute(id_sql)
         r['min_id'], r['max_id'] = cursor.fetchall()[0]
+
+        cursor.execute(updated_sql, delay_thresholds)
+        row = cursor.fetchall()[0]
+        r['total'], r['new'], r['min_update_time'], r['max_update_time'] = (
+            row[:4])
+        
+        # unpack "delayed" stats, and convert to float/int
+        r['delayed'] = {}
+        for threshold, amount in zip(delay_thresholds, row[4:]):
+            # (SUM(IF(...)) can produce NULL, so convert None to 0)
+            r['delayed'][float(threshold)] = int(amount or 0)
 
         cursor.execute(locked_sql)
         r['locked'], r['min_lock_time'], r['max_lock_time'] = (
@@ -743,33 +758,24 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
         r['bumped'], r['min_bump_time'], r['max_bump_time'] = (
             cursor.fetchall()[0])
 
-        cursor.execute(updated_sql)
-        r['updated'], r['min_update_time'], r['max_update_time'] = (
-            cursor.fetchall()[0])
-
-        cursor.execute(new_sql)
-        r['new'] = cursor.fetchall()[0][0]
-
-        r['delayed'] = {}
-        for threshold in delay_thresholds:
-            threshold = float(threshold)
-            cursor.execute(delayed_sql, [threshold])
-            r['delayed'][threshold] = int(cursor.fetchall()[0][0])
-
-        # make sure times are always floats
+        # make sure times are always floats and other numbers are ints
+        # make sure only "_id" stats can be None
         for key in r:
             if key.endswith('_time'):
                 r[key] = float(r[key] or 0.0)
-            if isinstance (r[key], long):
+            elif r[key] is None and not key.endswith('_id'):
+                r[key] = 0
+            # (SUM(IF(...)) can produce Decimals with MySQLdb)
+            elif isinstance (r[key], (long, Decimal)):
                 r[key] = int(r[key])
+
+        # compute derived stats now that everything is the right type
+        r['updated'] = r['total'] - r['new']
 
         return r
 
-    # we're running in READ UNCOMMITTED mode, so even though this is a single
-    # "transaction", it doesn't acquire any locks. Just easier to do it this
-    # way than to write separate database logic for this one function.
     return _run(query, dbconn, level='READ UNCOMMITTED', read_only=True,
-                retry=False)
+                retry=False) # no locking, so no plausible need to retry
 
 
 ### Object-Oriented version ###
