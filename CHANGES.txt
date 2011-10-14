@@ -1,5 +1,8 @@
 v0.2.0, 2010-10-?? -- Learning from experience
- * Cleaner output from stats() (Issue #4)
- * Delay info for locked/bumped IDs now included in stats() (Issue #5) 
+ * Updates to stats()
+   * Cleaner output (Issue #4)
+   * We now collect update-time stats for locked/bumped IDs (Issue #5)
+   * No delay thresholds by default (Issue #13)
+   * There is now a 'total' stat
 
 v0.1.0, 2010-08-15 -- Initial release
