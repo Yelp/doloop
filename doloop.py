@@ -36,9 +36,8 @@ from __future__ import with_statement
 __author__ = 'David Marin <dave@yelp.com>'
 __version__ = '0.2.0-dev'
 
-from decimal import Decimal
-import MySQLdb
-import MySQLdb.constants.ER
+import decimal
+import inspect
 
 #: One hour, in seconds
 ONE_HOUR = 60 * 60
@@ -49,10 +48,44 @@ ONE_DAY = 60 * 60 * 24
 #: One week, in seconds
 ONE_WEEK = 60 * 60 * 24 * 7
 
-_RECOVERABLE_MYSQL_ERROR_CODES = (
-    MySQLdb.constants.ER.LOCK_DEADLOCK,
-    MySQLdb.constants.ER.LOCK_WAIT_TIMEOUT,
-)
+# MySQL error codes. From
+# http://dev.mysql.com/doc/refman/5.5/en/error-messages-server.html
+#
+# having our own copy of these error codes allows us to be agnostic
+# about our MySQL driver (could be MySQLdb, oursqlx, PyMySQLdb, etc.)
+_LOCK_WAIT_TIMEOUT = 1205
+_LOCK_DEADLOCK = 1213
+
+_RECOVERABLE_MYSQL_ERROR_CODES = set([
+    _LOCK_WAIT_TIMEOUT,
+    _LOCK_DEADLOCK,
+])
+
+# from http://www.python.org/dev/peps/pep-0249/
+_DBI_EXCEPTION_CLASS_NAMES = set([
+    'InterfaceError',
+    'DatabaseError',
+    'DataError',
+    'OperationalError',
+    'IntegrityError',
+    'InternalError',
+    'ProgrammingError',
+    'NotSupportedError',
+])
+
+
+def _is_db_exception(e):
+    """Check if an exception is plausibly from a DBI database driver, based on
+    its name."""
+    return any(cls.__name__ in _DBI_EXCEPTION_CLASS_NAMES
+               for cls in inspect.getmro(e.__class__))
+
+
+def _is_recoverable(e):
+    """Check if an exception is a recoverable MySQL exception."""
+    return (_is_db_exception(e) and
+            hasattr(e, 'args') and
+            any(arg in _RECOVERABLE_MYSQL_ERROR_CODES for arg in e.args or ()))
 
 
 ### Utils ###
@@ -113,8 +146,8 @@ def _run_with_rollbacks(query, dbconn, level='REPEATABLE READ',
             except:
                 dbconn.rollback()
                 raise
-        except MySQLdb.OperationalError, e:
-            if not (retry and e.args[0] in _RECOVERABLE_MYSQL_ERROR_CODES):
+        except Exception, e:
+            if not (retry and _is_recoverable(e)):
                 raise
 
 
@@ -753,7 +786,7 @@ def stats(dbconn, table, delay_thresholds=None):
             elif r[key] is None and not key.endswith('_id'):
                 r[key] = 0
             # (SUM(IF(...)) can produce Decimals with MySQLdb)
-            elif isinstance (r[key], (long, Decimal)):
+            elif isinstance (r[key], (long, decimal.Decimal)):
                 r[key] = int(r[key])
 
         # compute derived stats now that everything is the right type
