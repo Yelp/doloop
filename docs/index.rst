@@ -9,14 +9,19 @@ doloop - a task loop for keeping things updated
 What is doloop?
 ---------------
 
-:py:mod:`doloop` is a simple but well-thought-out system for keeping things 
+:py:mod:`doloop` is a simple but well-thought-out system for keeping things
 with unique IDs updated. It supports concurrency and prioritization.
 
-:py:mod:`doloop`'s only dependency is 
-`MySQL <http://mysql-python.sourceforge.net/>`_; it does not require you to 
+:py:mod:`doloop`'s only dependency is
+`MySQL <http://dev.mysql.com>`_; it does not require you to
 install or administer a separate server.
 
-:py:mod:`doloop` is *not* ideal for queuing tasks that you only ever want 
+:py:mod:`doloop` works with `MySQLdb <http://mysql-python.sourceforge.net/>`_
+or any other DBI-compliant Python MySQL library (e.g.
+`PyMySQL <https://github.com/petehunt/PyMySQL/>`_,
+`oursql <https://launchpad.net/oursql>`_).
+
+:py:mod:`doloop` is *not* ideal for queuing tasks that you only ever want
 to do once; for that, you might prefer
 `Gearman <http://packages.python.org/gearman/>`_ or something similar.
 

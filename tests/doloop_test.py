@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
-import MySQLdb
 import os
 import re
 import shutil
 from subprocess import Popen, PIPE
+import sys
 import tempfile
 import time
 import warnings
@@ -37,6 +37,12 @@ from testify import run
 import doloop
 from doloop import ONE_HOUR, ONE_DAY, ONE_WEEK
 
+# support arbitrary MySQL drivers
+PYTHON_MYSQL_MODULE = os.environ.get('PYTHON_MYSQL_MODULE') or 'MySQLdb'
+__import__(PYTHON_MYSQL_MODULE)
+mysql_module = sys.modules[PYTHON_MYSQL_MODULE]
+
+
 log = logging.getLogger('doloop_test')
 
 WHITESPACE_RE = re.compile('\s+')
@@ -48,19 +54,23 @@ class InternalError(Exception):
     pass
 
 
+# MySQLdb uses OperationalError for deadlocks (which looks to be most correct)
+# so we use that for testing. We use InternalError (above) to ensure that
+# we can catch other kinds of DBI errors from other modules
+
 # This is the exception through on deadlock, which we should recover from
-DEADLOCK_EXC = MySQLdb.OperationalError(
+DEADLOCK_EXC = mysql_module.OperationalError(
     1213, 'Deadlock found when trying to get lock; try restarting transaction')
 
 # We should also recover from lock wait timeouts
-LOCK_WAIT_TIMEOUT_EXC = MySQLdb.OperationalError(
+LOCK_WAIT_TIMEOUT_EXC = mysql_module.OperationalError(
     1205, 'Lock wait timeout exceeded; try restarting transaction')
 
 # We should also handle errors from other DBI drivers
-NON_MYSQLDB_DEADLOCK_EXC = InternalError(1213)
+OTHER_DRIVER_DEADLOCK_EXC = InternalError(1213)
 
 # Non-recoverable error. Use a fake error to avoid confusion.
-OTHER_MYSQLDB_EXC = MySQLdb.OperationalError(99999, 'Too many nines')
+OTHER_DB_EXC = mysql_module.OperationalError(99999, 'Too many nines')
 
 # Non-DB exception that magically has the right error code
 NON_DB_EXC = ValueError(1213)
@@ -169,8 +179,16 @@ class DoLoopTestCase(TestCase):
         log.info('deleting %s' % self.mysql_dir)
         shutil.rmtree(self.mysql_dir)
 
-    def make_dbconn(self, raw=False):
-        return MySQLdb.connect(unix_socket=self.mysql_socket, db='doloop')
+    def _connect(self, **kwargs):
+        """Connect using MySQLdb or whatever driver is specified
+        through the PYTHON_MYSQL_MODULE environment variable."""
+        # PyMySQL requires user (though it may be empty)
+        if not 'user' in kwargs:
+            kwargs['user'] = ''
+        return mysql_module.connect(**kwargs)
+
+    def make_dbconn(self):
+        return self._connect(unix_socket=self.mysql_socket, db='doloop')
 
     def create_doloop(self, table='loop', id_type='INT'):
         """Create a loop table in the `doloop` database, and return
@@ -189,10 +207,15 @@ class DoLoopTestCase(TestCase):
     @setup
     def create_empty_doloop_db(self):
         """Create an empty database named `doloop`"""
-        dbconn = MySQLdb.connect(unix_socket=self.mysql_socket)
+        dbconn = self._connect(unix_socket=self.mysql_socket)
         with warnings.catch_warnings():
-            warnings.filterwarnings('ignore', category=MySQLdb.Warning)
-            dbconn.cursor().execute('DROP DATABASE IF EXISTS `doloop`')
+            warnings.simplefilter('ignore')
+            # oursql apparently doesn't handle warnings correctly with
+            # mysqld 5.1.58?
+            try:
+                dbconn.cursor().execute('DROP DATABASE IF EXISTS `doloop`')
+            except:
+                pass
         dbconn.cursor().execute('CREATE DATABASE `doloop`')
 
 
@@ -255,19 +278,19 @@ class DoLoopTestCase(TestCase):
         dbconn = ExceptionRaisingDbConnWrapper(self.make_dbconn())
 
         dbconn.raise_exception_later(DEADLOCK_EXC, num_queries=1)
-        assert_raises(MySQLdb.OperationalError,
+        assert_raises(mysql_module.OperationalError,
                       doloop.create, dbconn, 'foo_loop')
 
         dbconn.raise_exception_later(LOCK_WAIT_TIMEOUT_EXC, num_queries=1)
-        assert_raises(MySQLdb.OperationalError,
+        assert_raises(mysql_module.OperationalError,
                       doloop.create, dbconn, 'foo_loop')
 
-        dbconn.raise_exception_later(NON_MYSQLDB_DEADLOCK_EXC, num_queries=1)
+        dbconn.raise_exception_later(OTHER_DRIVER_DEADLOCK_EXC, num_queries=1)
         assert_raises(Exception,
                       doloop.create, dbconn, 'foo_loop')
 
-        dbconn.raise_exception_later(OTHER_MYSQLDB_EXC, num_queries=1)
-        assert_raises(MySQLdb.OperationalError,
+        dbconn.raise_exception_later(OTHER_DB_EXC, num_queries=1)
+        assert_raises(mysql_module.OperationalError,
                       doloop.create, dbconn, 'foo_loop')
 
         dbconn.raise_exception_later(NON_DB_EXC, num_queries=1)
@@ -333,7 +356,7 @@ class DoLoopTestCase(TestCase):
     def test_add_recovers_correctly_from_non_mysql_db_exc(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
 
-        dbconn.raise_exception_later(NON_MYSQLDB_DEADLOCK_EXC, num_queries=3)
+        dbconn.raise_exception_later(OTHER_DRIVER_DEADLOCK_EXC, num_queries=3)
 
         assert_equal(loop.add(42), 1)
         assert_equal(loop.get(10), [42])
@@ -341,8 +364,8 @@ class DoLoopTestCase(TestCase):
     def test_add_lets_other_errors_through(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
 
-        dbconn.raise_exception_later(OTHER_MYSQLDB_EXC, num_queries=3)
-        assert_raises(MySQLdb.OperationalError, loop.add, 42)
+        dbconn.raise_exception_later(OTHER_DB_EXC, num_queries=3)
+        assert_raises(mysql_module.OperationalError, loop.add, 42)
 
         dbconn.raise_exception_later(NON_DB_EXC, num_queries=3)
         assert_raises(Exception, loop.add, 42)
@@ -391,12 +414,12 @@ class DoLoopTestCase(TestCase):
         assert_equal(loop.remove([10, 12]), 2)
         assert_equal(loop.get(10), [11, 13, 14])
 
-    def test_remove_recovers_correctly_from_non_mysqldb_deadlock(self):
+    def test_remove_recovers_correctly_from_other_driver_deadlock(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
 
         loop.add(range(10, 15))
 
-        dbconn.raise_exception_later(NON_MYSQLDB_DEADLOCK_EXC, num_queries=3)
+        dbconn.raise_exception_later(OTHER_DRIVER_DEADLOCK_EXC, num_queries=3)
 
         assert_equal(loop.remove([10, 12]), 2)
         assert_equal(loop.get(10), [11, 13, 14])
@@ -406,8 +429,8 @@ class DoLoopTestCase(TestCase):
 
         loop.add(range(10, 15))
 
-        dbconn.raise_exception_later(OTHER_MYSQLDB_EXC, num_queries=3)
-        assert_raises(MySQLdb.OperationalError, loop.remove, [10, 12])
+        dbconn.raise_exception_later(OTHER_DB_EXC, num_queries=3)
+        assert_raises(mysql_module.OperationalError, loop.remove, [10, 12])
 
         dbconn.raise_exception_later(NON_DB_EXC, num_queries=3)
         assert_raises(Exception, loop.remove, [10, 12])
@@ -526,12 +549,12 @@ class DoLoopTestCase(TestCase):
         dbconn.raise_exception_later(LOCK_WAIT_TIMEOUT_EXC, num_queries=4)
         assert_equal(loop.get(10), range(10, 20))
 
-    def test_get_recovers_correctly_from_non_mysqldb_deadlock(self):
+    def test_get_recovers_correctly_from_other_driver_deadlock(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
 
         loop.add(range(10, 25))
 
-        dbconn.raise_exception_later(NON_MYSQLDB_DEADLOCK_EXC, num_queries=4)
+        dbconn.raise_exception_later(OTHER_DRIVER_DEADLOCK_EXC, num_queries=4)
         assert_equal(loop.get(10), range(10, 20))
 
     def test_get_lets_other_errors_through(self):
@@ -539,8 +562,8 @@ class DoLoopTestCase(TestCase):
 
         loop.add(range(10, 25))
 
-        dbconn.raise_exception_later(OTHER_MYSQLDB_EXC, num_queries=4)
-        assert_raises(MySQLdb.OperationalError, loop.get, 10)
+        dbconn.raise_exception_later(OTHER_DB_EXC, num_queries=4)
+        assert_raises(mysql_module.OperationalError, loop.get, 10)
         
         dbconn.raise_exception_later(NON_DB_EXC, num_queries=4)
         assert_raises(Exception, loop.get, 10)
@@ -601,11 +624,11 @@ class DoLoopTestCase(TestCase):
         assert_equal(loop.get(10, min_loop_time=0),
                      [10, 12, 14, 16, 18, 1, 11, 13, 15, 17])
 
-    def test_did_recovers_correctly_from_non_mysqldb_deadlock(self):
+    def test_did_recovers_correctly_from_other_driver_deadlock(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
         loop.add(range(10, 20))
 
-        dbconn.raise_exception_later(NON_MYSQLDB_DEADLOCK_EXC, num_queries=4)
+        dbconn.raise_exception_later(OTHER_DRIVER_DEADLOCK_EXC, num_queries=4)
 
         # test auto_add as well
         assert_equal(loop.did([11, 13, 15, 17, 19, 1]), 6)
@@ -617,8 +640,8 @@ class DoLoopTestCase(TestCase):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
         loop.add(range(10, 20))
 
-        dbconn.raise_exception_later(OTHER_MYSQLDB_EXC, num_queries=4)
-        assert_raises(MySQLdb.OperationalError,
+        dbconn.raise_exception_later(OTHER_DB_EXC, num_queries=4)
+        assert_raises(mysql_module.OperationalError,
                       loop.did, [11, 13, 15, 17, 19, 1])
 
         dbconn.raise_exception_later(NON_DB_EXC, num_queries=4)
@@ -642,7 +665,6 @@ class DoLoopTestCase(TestCase):
         loop.add(range(10, 20))
         ids = loop.get(5)
         assert_equal(loop.unlock(ids), 5)
-        assert_equal(loop.unlock(ids), 0)  # already unlocked
 
         # unlocking doesn't re-prioritize the IDs since it doesn't touch
         # last_updated
@@ -650,8 +672,8 @@ class DoLoopTestCase(TestCase):
         assert_equal(loop.get(10), [])
 
         # try unlocking just one ID
-        assert_equal(loop.unlock(7), 1)
-        assert_equal(loop.get(10), [7])
+        assert_equal(loop.unlock(13), 1)
+        assert_equal(loop.get(10), [13])
 
     def test_unlock_auto_add(self):
         loop = self.create_doloop()
@@ -659,7 +681,11 @@ class DoLoopTestCase(TestCase):
         assert_equal(loop.get(10), [])
 
         loop.add(111)
-        assert_equal(loop.unlock([111, 222]), 1)  # 111 already added
+
+        # we may or may not count 111 depending on how MySQL is reporting
+        # row count. We definitely shouldn't get 0 or 3!
+        assert_in(loop.unlock([111, 222]), (1, 2))
+        
         assert_equal(loop.unlock(333, auto_add=False), 0)  # no row for 333
 
         assert_equal(loop.get(10), [111, 222])
@@ -667,51 +693,37 @@ class DoLoopTestCase(TestCase):
     def test_unlock_recovers_correctly_from_deadlock(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
 
-        loop.add(111)
-        assert_equal(loop.unlock([111, 222]), 1)  # 111 already added
-        loop.bump(222)  # lock 222
+        loop.bump([111, 222, 333])
 
         dbconn.raise_exception_later(DEADLOCK_EXC, num_queries=3)
-
-        assert_equal(loop.unlock([111, 222, 333]), 2)  # 222 unlocked, 333 new
-        assert_equal(loop.get(10), [111, 222, 333])
+        assert_equal(loop.unlock([111, 222]), 2)
 
     def test_unlock_recovers_correctly_from_lock_wait_timeout(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
 
-        loop.add(111)
-        assert_equal(loop.unlock([111, 222]), 1)  # 111 already added
-        loop.bump(222)  # lock 222
+        loop.bump([111, 222, 333])
 
         dbconn.raise_exception_later(LOCK_WAIT_TIMEOUT_EXC, num_queries=3)
+        assert_equal(loop.unlock([111, 222]), 2)
 
-        assert_equal(loop.unlock([111, 222, 333]), 2)  # 222 unlocked, 333 new
-        assert_equal(loop.get(10), [111, 222, 333])
-
-    def test_unlock_recovers_correctly_from_non_mysqldb_deadlock(self):
+    def test_unlock_recovers_correctly_from_other_driver_deadlock(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
 
-        loop.add(111)
-        assert_equal(loop.unlock([111, 222]), 1)  # 111 already added
-        loop.bump(222)  # lock 222
+        loop.bump([111, 222, 333])
 
-        dbconn.raise_exception_later(NON_MYSQLDB_DEADLOCK_EXC, num_queries=3)
-
-        assert_equal(loop.unlock([111, 222, 333]), 2)  # 222 unlocked, 333 new
-        assert_equal(loop.get(10), [111, 222, 333])
+        dbconn.raise_exception_later(OTHER_DRIVER_DEADLOCK_EXC, num_queries=3)
+        assert_equal(loop.unlock([111, 222]), 2)
 
     def test_unlock_lets_other_errors_through(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
 
-        loop.add(111)
-        assert_equal(loop.unlock([111, 222]), 1)  # 111 already added
-        loop.bump(222)  # lock 222
+        loop.bump([111, 222, 333])
 
-        dbconn.raise_exception_later(OTHER_MYSQLDB_EXC, num_queries=3)
-        assert_raises(MySQLdb.OperationalError, loop.unlock, [222, 333])
+        dbconn.raise_exception_later(OTHER_DB_EXC, num_queries=3)
+        assert_raises(mysql_module.OperationalError, loop.unlock, [111, 222])
 
         dbconn.raise_exception_later(NON_DB_EXC, num_queries=3)
-        assert_raises(Exception, loop.unlock, [222, 333])
+        assert_raises(Exception, loop.unlock, [111, 222])
 
 
     ### tests for bump() ###
@@ -789,12 +801,12 @@ class DoLoopTestCase(TestCase):
         assert_equal(loop.bump([12, 16]), 2)
         assert_equal(loop.get(5), [12, 16, 10, 11, 13])
 
-    def test_bump_recovers_correctly_from_non_mysqldb_deadlock(self):
+    def test_bump_recovers_correctly_from_other_driver_deadlock(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
 
         loop.add(range(10, 15))
 
-        dbconn.raise_exception_later(NON_MYSQLDB_DEADLOCK_EXC, num_queries=4)
+        dbconn.raise_exception_later(OTHER_DRIVER_DEADLOCK_EXC, num_queries=4)
 
         assert_equal(loop.bump([12, 16]), 2)
         assert_equal(loop.get(5), [12, 16, 10, 11, 13])
@@ -804,8 +816,8 @@ class DoLoopTestCase(TestCase):
 
         loop.add(range(10, 15))
 
-        dbconn.raise_exception_later(OTHER_MYSQLDB_EXC, num_queries=4)
-        assert_raises(MySQLdb.OperationalError, loop.bump, [12, 16])
+        dbconn.raise_exception_later(OTHER_DB_EXC, num_queries=4)
+        assert_raises(mysql_module.OperationalError, loop.bump, [12, 16])
 
         dbconn.raise_exception_later(NON_DB_EXC, num_queries=4)
         assert_raises(Exception, loop.bump, [12, 16])
@@ -874,11 +886,11 @@ class DoLoopTestCase(TestCase):
         assert_equal(loop.check([18, 19, 20]), {18: (None, None),
                                                 19: (None, None)})
 
-    def test_check_recovers_correctly_from_non_mysqldb_deadlock(self):
+    def test_check_recovers_correctly_from_other_driver_deadlock(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
         loop.add(range(10, 20))
 
-        dbconn.raise_exception_later(NON_MYSQLDB_DEADLOCK_EXC, num_queries=3)
+        dbconn.raise_exception_later(OTHER_DRIVER_DEADLOCK_EXC, num_queries=3)
 
         assert_equal(loop.check([18, 19, 20]), {18: (None, None),
                                                 19: (None, None)})
@@ -887,8 +899,8 @@ class DoLoopTestCase(TestCase):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
         loop.add(range(10, 20))
 
-        dbconn.raise_exception_later(OTHER_MYSQLDB_EXC, num_queries=3)
-        assert_raises(MySQLdb.OperationalError, loop.check, [18, 19, 20])
+        dbconn.raise_exception_later(OTHER_DB_EXC, num_queries=3)
+        assert_raises(mysql_module.OperationalError, loop.check, [18, 19, 20])
 
         dbconn.raise_exception_later(NON_DB_EXC, num_queries=3)
         assert_raises(Exception, loop.check, [18, 19, 20])
@@ -998,16 +1010,16 @@ class DoLoopTestCase(TestCase):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
 
         dbconn.raise_exception_later(DEADLOCK_EXC, num_queries=5)
-        assert_raises(MySQLdb.OperationalError, loop.stats)
+        assert_raises(mysql_module.OperationalError, loop.stats)
 
         dbconn.raise_exception_later(LOCK_WAIT_TIMEOUT_EXC, num_queries=5)
-        assert_raises(MySQLdb.OperationalError, loop.stats)
+        assert_raises(mysql_module.OperationalError, loop.stats)
 
-        dbconn.raise_exception_later(NON_MYSQLDB_DEADLOCK_EXC, num_queries=5)
+        dbconn.raise_exception_later(OTHER_DRIVER_DEADLOCK_EXC, num_queries=5)
         assert_raises(Exception, loop.stats)
 
-        dbconn.raise_exception_later(OTHER_MYSQLDB_EXC, num_queries=5)
-        assert_raises(MySQLdb.OperationalError, loop.stats)
+        dbconn.raise_exception_later(OTHER_DB_EXC, num_queries=5)
+        assert_raises(mysql_module.OperationalError, loop.stats)
 
         dbconn.raise_exception_later(NON_DB_EXC, num_queries=5)
         assert_raises(Exception, loop.stats)
