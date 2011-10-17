@@ -21,10 +21,6 @@ or any other DBI-compliant Python MySQL library (e.g.
 `PyMySQL <https://github.com/petehunt/PyMySQL/>`_,
 `oursql <https://launchpad.net/oursql>`_).
 
-:py:mod:`doloop` is *not* ideal for queuing tasks that you only ever want
-to do once; for that, you might prefer
-`Gearman <http://packages.python.org/gearman/>`_ or something similar.
-
 Documentation
 -------------
 
