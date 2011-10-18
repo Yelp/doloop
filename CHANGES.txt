@@ -6,7 +6,7 @@ v0.2.0, 2010-10-19 -- Learning from experience
    * There is now a 'total' stat
  * should now work with any DBI-compliant MySQL driver (Issue #12)
    * tested MySQLdb, pymysql, oursql, mysql.connector
-   * update()'s return value is now officially useless
+   * update()'s return value was useless before; now it's official.
  * read-only mode for testing/dry runs (Issue #9)
 
 v0.1.0, 2010-08-15 -- Initial release
