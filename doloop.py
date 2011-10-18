@@ -34,7 +34,7 @@ Run one or more workers (e.g in a crontab), with code like this::
 from __future__ import with_statement
 
 __author__ = 'David Marin <dave@yelp.com>'
-__version__ = '0.2.0-dev'
+__version__ = '0.2.0'
 
 import decimal
 import inspect
