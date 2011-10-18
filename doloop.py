@@ -91,35 +91,49 @@ def _is_db_exception(e):
 
 def _is_recoverable(e):
     """Check if an exception is a recoverable MySQL exception."""
-    return (_is_db_exception(e) and
-            hasattr(e, 'args') and
-            any(arg in _RECOVERABLE_MYSQL_ERROR_CODES for arg in e.args or ()))
+    if not _is_db_exception(e):
+        return
+
+    if hasattr(e, 'errno'): # mysql.connector
+        return e.errno in _RECOVERABLE_MYSQL_ERROR_CODES
+    else:
+        return any(arg in _RECOVERABLE_MYSQL_ERROR_CODES
+                   for arg in e.args or ())
 
 
-_cursor_type_to_paramstyle = {}
+_cursor_type_to_paramstyle = {} # cache for _paramstyle()
 
 def _paramstyle(cursor):
     """Figure out the paramstyle (e.g. qmark, format) used by the
-    given database cursor.
+    given database cursor. DBI only specifies that paramstyle needs to be
+    defined by the package containing the cursor, so we need to go hunting
+    for it.
 
-    Return None if we can't tell (might be a wrapper object?)
+    Return None if we can't tell (might be a wrapper object, for example)
     """
     global _cursor_type_to_paramstyle
 
     cursor_type = type(cursor)
     if cursor_type not in _cursor_type_to_paramstyle:
-        # inspect.getmodulename() fails on MySQLdb!
-        module = inspect.getmodule(cursor_type)
-        module_name = module.__name__
+        # work backward from the module that the cursor's in
+        # for example: mysql.connector.connection, mysql.connector, mysql
 
-        parent_module_name = module_name.split('.')[0]
-        parent_module = sys.modules[parent_module_name]
+        # inspect.getmodulename() crashes on MySQLdb!
+        cursor_module = inspect.getmodule(cursor_type)
+        cursor_module_name = cursor_module.__name__
 
-        # if there's no "paramstyle" attribute in its module, it might
-        # be a wrapper class or something like that; we'll just have to
-        # try both variations
-        _cursor_type_to_paramstyle[cursor_type] = getattr(
-            parent_module, 'paramstyle', None)
+        cursor_module_path = cursor_module_name.split('.')
+        paramstyle = None
+
+        for i in range(len(cursor_module_path), 0, -1):
+            module_name = '.'.join(cursor_module_path[:i])
+            module = sys.modules[module_name]
+
+            if hasattr(module, 'paramstyle'):
+                paramstyle = getattr(module, 'paramstyle')
+                break
+
+        _cursor_type_to_paramstyle[cursor_type] = paramstyle
 
     return _cursor_type_to_paramstyle[cursor_type]
 
@@ -150,6 +164,14 @@ def _execute(cursor, qmark_query, params):
         
     elif paramstyle == 'format':
         cursor.execute(format_query, params)
+
+    elif paramstyle == 'pyformat':
+        # usually if a driver supports pyformat, it supports format too
+        try:
+            cursor.execute(format_query, params)
+        except:
+            raise NotImplementedError(
+                'pyformat paramstyle is unsupported' % paramstyle)
     
     elif paramstyle is None:
         # try format (most common) and then qmark
@@ -161,7 +183,7 @@ def _execute(cursor, qmark_query, params):
             cursor.execute(qmark_query, params)
 
     else:
-        raise NotImplementedError("%r paramstyle is unsupported" % paramstyle)
+        raise NotImplementedError('%r paramstyle is unsupported' % paramstyle)
 
 
 ### Utils ###

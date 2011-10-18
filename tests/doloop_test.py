@@ -26,6 +26,7 @@ from testify import assert_equal
 from testify import assert_gte
 from testify import assert_in
 from testify import assert_lte
+from testify import assert_not_equal
 from testify import assert_not_in
 from testify import assert_not_reached
 from testify import assert_raises
@@ -58,19 +59,22 @@ class InternalError(Exception):
 # so we use that for testing. We use InternalError (above) to ensure that
 # we can catch other kinds of DBI errors from other modules
 
+# usually error code comes first, but we put it second to support
+# mysql.connector; the other drivers don't seem to mind
+
 # This is the exception through on deadlock, which we should recover from
 DEADLOCK_EXC = mysql_module.OperationalError(
-    1213, 'Deadlock found when trying to get lock; try restarting transaction')
+    'Deadlock found when trying to get lock; try restarting transaction', 1213)
 
 # We should also recover from lock wait timeouts
 LOCK_WAIT_TIMEOUT_EXC = mysql_module.OperationalError(
-    1205, 'Lock wait timeout exceeded; try restarting transaction')
+    'Lock wait timeout exceeded; try restarting transaction', 1205)
 
 # We should also handle errors from other DBI drivers
 OTHER_DRIVER_DEADLOCK_EXC = InternalError(1213)
 
 # Non-recoverable error. Use a fake error to avoid confusion.
-OTHER_DB_EXC = mysql_module.OperationalError(99999, 'Too many nines')
+OTHER_DB_EXC = mysql_module.OperationalError('Too many nines', 99999)
 
 # Non-DB exception that magically has the right error code
 NON_DB_EXC = ValueError(1213)
@@ -217,6 +221,13 @@ class DoLoopTestCase(TestCase):
             except:
                 pass
         dbconn.cursor().execute('CREATE DATABASE `doloop`')
+
+
+    ### tests for database wrapper ###
+
+    def test_dbi_paramstyle(self):
+        cursor = self.make_dbconn().cursor()
+        assert_not_equal(doloop._paramstyle(cursor), None)
 
 
     ### tests for create() ###
