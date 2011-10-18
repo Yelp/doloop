@@ -4,5 +4,8 @@ v0.2.0, 2010-10-?? -- Learning from experience
    * We now collect update-time stats for locked/bumped IDs (Issue #5)
    * No delay thresholds by default (Issue #13)
    * There is now a 'total' stat
+ * should now work with any DBI-compliant MySQL driver (Issue #12)
+   * tested MySQLdb, pymysql, oursql, mysql.connector
+ * read-only mode for testing/dry runs (Issue #9)
 
 v0.1.0, 2010-08-15 -- Initial release

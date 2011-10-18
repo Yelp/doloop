@@ -312,7 +312,7 @@ def sql_for_create(table, id_type='INT'):
 
 ### Adding and removing IDs ###
 
-def add(dbconn, table, id_or_ids, updated=False):
+def add(dbconn, table, id_or_ids, updated=False, test=False):
     """Add IDs to this task loop.
 
     :param dbconn: any DBI-compliant MySQL connection object
@@ -321,6 +321,7 @@ def add(dbconn, table, id_or_ids, updated=False):
     :param updated: Set this to true if these IDs have already been updated;
                     this will ``last_updated`` to the current time rather than
                     ``NULL``.
+    :param test: If ``True``, don't actually write to the database
 
     :return: number of IDs that are new
 
@@ -343,7 +344,7 @@ def add(dbconn, table, id_or_ids, updated=False):
     def query(cursor):
         return _add(cursor, table, ids, updated=updated)
 
-    return _run(query, dbconn)
+    return _run(query, dbconn, read_only=test)
 
 
 def _add(cursor, table, ids, updated=False):
@@ -373,12 +374,13 @@ def _add(cursor, table, ids, updated=False):
     return cursor.rowcount
 
 
-def remove(dbconn, table, id_or_ids):
+def remove(dbconn, table, id_or_ids, test=False):
     """Remove IDs from this task loop.
 
     :param dbconn: any DBI-compliant MySQL connection object
     :param str table: name of your task loop table
     :param id_or_ids: ID or list of IDs to add
+    :param test: If ``True``, don't actually write to the database
 
     :return: number of IDs removed
 
@@ -402,12 +404,13 @@ def remove(dbconn, table, id_or_ids):
         _execute(cursor, sql, ids)
         return cursor.rowcount
 
-    return _run(query, dbconn)
+    return _run(query, dbconn, read_only=test)
 
 
 ### Getting and updating IDs ###
 
-def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
+def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
+        test=False):
     """Get some IDs of things to update, and lock them.
 
     Generally, after you've updated IDs, you'll want to pass them
@@ -436,6 +439,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
     :param min_loop_time: If a job is unlocked, make sure it was last updated
                           at least this many seconds ago, so that we don't spin
                           on the same IDs.
+    :param test: If ``True``, don't actually write to the database
 
     :return: list of IDs
 
@@ -535,10 +539,10 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
 
         return ids
 
-    return _run_with_rollbacks(query, dbconn)
+    return _run_with_rollbacks(query, dbconn, read_only=test)
 
 
-def did(dbconn, table, id_or_ids, auto_add=True):
+def did(dbconn, table, id_or_ids, auto_add=True, test=False):
     """Mark IDs as updated and unlock them.
 
     Usually, these will be IDs that you grabbed using :py:func:`~doloop.get`,
@@ -549,6 +553,7 @@ def did(dbconn, table, id_or_ids, auto_add=True):
     :param str table: name of your task loop table
     :param id_or_ids: ID or list of IDs that we just updated
     :param bool auto_add: Add any IDs that are not already in the table.
+    :param test: If ``True``, don't actually write to the database
 
     :return: number of rows updated (mostly useful as a sanity check)
 
@@ -584,10 +589,10 @@ def did(dbconn, table, id_or_ids, auto_add=True):
         _execute(cursor, sql, ids)
         return cursor.rowcount
 
-    return _run(query, dbconn)
+    return _run(query, dbconn, read_only=test)
 
 
-def unlock(dbconn, table, id_or_ids, auto_add=True):
+def unlock(dbconn, table, id_or_ids, auto_add=True, test=False):
     """Unlock IDs without marking them updated.
 
     Useful if you :py:func:`~doloop.get` IDs, but are then unable or unwilling
@@ -597,6 +602,7 @@ def unlock(dbconn, table, id_or_ids, auto_add=True):
     :param str table: name of your task loop table
     :param id_or_ids: ID or list of IDs
     :param bool auto_add: Add any IDs that are not already in the table.
+    :param test: If ``True``, don't actually write to the database
 
     :return: Either: number of rows updated/added *or* number of IDs that
              correspond to real rows. (MySQL unfortunately returns different
@@ -648,12 +654,12 @@ def unlock(dbconn, table, id_or_ids, auto_add=True):
 
         return rowcount
 
-    return _run(query, dbconn)
+    return _run(query, dbconn, read_only=test)
 
 
 ### Prioritization ###
 
-def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True):
+def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True, test=False):
     """Bump priority of IDs.
 
     Normally we set ``lock_until`` to the current time, which gives them
@@ -677,6 +683,7 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True):
     :param id_or_ids: ID or list of IDs
     :param lock_for: Number of seconds that the IDs should stay locked.
     :param bool auto_add: Add any IDs that are not already in the table.
+    :param test: If ``True``, don't actually write to the database
 
     :return: number of IDs bumped (mostly useful as a sanity check)
 
@@ -718,7 +725,7 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True):
         _execute(cursor, sql, [lock_for, lock_for] + ids)
         return cursor.rowcount
 
-    return _run(query, dbconn)
+    return _run(query, dbconn, read_only=test)
 
 
 ### Auditing ###
@@ -952,49 +959,51 @@ class DoLoop(object):
     def table(self):
         return self._table
 
-    def add(self, id_or_ids, updated=False):
+    def add(self, id_or_ids, updated=False, test=False):
         """Add IDs to this task loop.
 
         See :py:func:`~doloop.add` for details.
         """
-        return add(self._make_dbconn(), self._table, id_or_ids, updated)
+        return add(self._make_dbconn(), self._table, id_or_ids, updated, test)
 
-    def remove(self, id_or_ids, updated=False):
+    def remove(self, id_or_ids, updated=False, test=False):
         """Remove IDs from this task loop.
 
         See :py:func:`~doloop.remove` for details.
         """
-        return remove(self._make_dbconn(), self._table, id_or_ids)
+        return remove(self._make_dbconn(), self._table, id_or_ids, test)
 
-    def get(self, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
+    def get(self, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
+            test=False):
         """Get some IDs of things to update and lock them.
 
         See :py:func:`~doloop.get` for details.
         """
-        return get(
-            self._make_dbconn(), self._table, limit, lock_for, min_loop_time)
+        return get(self._make_dbconn(), self._table, limit, lock_for,
+                   min_loop_time, test)
 
-    def did(self, id_or_ids, auto_add=True):
+    def did(self, id_or_ids, auto_add=True, test=False):
         """Mark IDs as updated and unlock them.
 
         See :py:func:`~doloop.did` for details.
         """
-        return did(self._make_dbconn(), self._table, id_or_ids, auto_add)
+        return did(self._make_dbconn(), self._table, id_or_ids, auto_add, test)
 
-    def unlock(self, id_or_ids, auto_add=True):
+    def unlock(self, id_or_ids, auto_add=True, test=False):
         """Unlock IDs without marking them updated.
 
         See :py:func:`~doloop.unlock` for details.
         """
-        return unlock(self._make_dbconn(), self._table, id_or_ids, auto_add)
+        return unlock(self._make_dbconn(), self._table, id_or_ids, auto_add,
+                      test)
 
-    def bump(self, id_or_ids, lock_for=0, auto_add=True):
+    def bump(self, id_or_ids, lock_for=0, auto_add=True, test=False):
         """Bump priority of IDs.
 
         See :py:func:`~doloop.bump` for details.
         """
-        return bump(
-            self._make_dbconn(), self._table, id_or_ids, lock_for, auto_add)
+        return bump(self._make_dbconn(), self._table, id_or_ids, lock_for,
+                    auto_add, test)
 
     def check(self, id_or_ids):
         """Check the status of particular IDs.
