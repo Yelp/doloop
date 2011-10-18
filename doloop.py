@@ -94,14 +94,15 @@ def _is_recoverable(e):
     if not _is_db_exception(e):
         return
 
-    if hasattr(e, 'errno'): # mysql.connector
+    if hasattr(e, 'errno'):  # mysql.connector
         return e.errno in _RECOVERABLE_MYSQL_ERROR_CODES
     else:
         return any(arg in _RECOVERABLE_MYSQL_ERROR_CODES
                    for arg in e.args or ())
 
 
-_cursor_type_to_paramstyle = {} # cache for _paramstyle()
+_cursor_type_to_paramstyle = {}  # cache for _paramstyle()
+
 
 def _paramstyle(cursor):
     """Figure out the paramstyle (e.g. qmark, format) used by the
@@ -161,7 +162,7 @@ def _execute(cursor, qmark_query, params):
 
     if paramstyle == 'qmark':
         cursor.execute(qmark_query, params)
-        
+
     elif paramstyle == 'format':
         cursor.execute(format_query, params)
 
@@ -172,7 +173,7 @@ def _execute(cursor, qmark_query, params):
         except:
             raise NotImplementedError(
                 'pyformat paramstyle is unsupported' % paramstyle)
-    
+
     elif paramstyle is None:
         # try format (most common) and then qmark
         try:
@@ -628,29 +629,29 @@ def unlock(dbconn, table, id_or_ids, auto_add=True, test=False):
     if not ids:
         return 0
 
-    sql = ('UPDATE `%s` SET `lock_until` = NULL'
-           ' WHERE `id` IN (%s)' % (table, ', '.join('?' for _ in ids)))
+    update_sql = ('UPDATE `%s` SET `lock_until` = NULL'
+                  ' WHERE `id` IN (%s)' % (table, ', '.join('?' for _ in ids)))
 
     def query(cursor):
-        # rowcount is either going to be number of rows affected, or
-        # number of rows found, depending on how the connection to MySQL
-        # was set up.
-
-        # For more info, see:
-        # 
         rowcount = 0
 
+        # If MySQL is reporting # of rows AFFECTED, we have to keep track
+        # of newly added rows here, since the update below won't affect them.
         if auto_add:
             _add(cursor, table, ids)
             rowcount += cursor.rowcount
 
-        _execute(cursor, sql, ids)
+        _execute(cursor, update_sql, ids)
         rowcount += cursor.rowcount
 
-        # if MySQL is reporting # of rows found and we auto_add, we'll
-        # double-count the newly added rows
+        # on the other hand, if MySQL is reporting # of rows FOUND, we just
+        # double-counted the rows we auto-added.
         if auto_add and rowcount > len(ids):
-            rowcount = len(ids)
+            rowcount = cursor.rowcount  # of rows found by UPDATE statement
+
+        # (The above can still be wrong if ids contains duplicates, but
+        # we can't even know that; for example, the id column could be
+        # a case-insenstive string. Not worth worrying about.)
 
         return rowcount
 
@@ -798,7 +799,7 @@ def stats(dbconn, table, delay_thresholds=None):
     * **new**: number of IDs where ``last_updated`` is ``NULL``
     * **total**: total number of IDs
     * **updated**: number of IDs where ``last_updated`` is not ``NULL``
-    
+
     For convenience and readability, all times will be floating point numbers.
 
     Only *min_id* and *max_id* can be ``None`` (when the table is empty).
@@ -871,7 +872,7 @@ def stats(dbconn, table, delay_thresholds=None):
                   ' UNIX_TIMESTAMP() - MAX(`lock_until`),'
                   ' UNIX_TIMESTAMP() - MIN(`lock_until`)'
                   ' FROM `%s` WHERE `lock_until` <= UNIX_TIMESTAMP()' % table)
-    
+
     def query(cursor):
         r = {}  # results to return
 
@@ -882,7 +883,7 @@ def stats(dbconn, table, delay_thresholds=None):
         row = cursor.fetchall()[0]
         r['total'], r['new'], r['min_update_time'], r['max_update_time'] = (
             row[:4])
-        
+
         # unpack "delayed" stats, and convert to float/int
         r['delayed'] = {}
         for threshold, amount in zip(delay_thresholds, row[4:]):
@@ -905,7 +906,7 @@ def stats(dbconn, table, delay_thresholds=None):
             elif r[key] is None and not key.endswith('_id'):
                 r[key] = 0
             # (SUM(IF(...)) can produce Decimals with MySQLdb)
-            elif isinstance (r[key], (long, decimal.Decimal)):
+            elif isinstance(r[key], (long, decimal.Decimal)):
                 r[key] = int(r[key])
 
         # compute derived stats now that everything is the right type
@@ -914,7 +915,7 @@ def stats(dbconn, table, delay_thresholds=None):
         return r
 
     return _run(query, dbconn, level='READ UNCOMMITTED', read_only=True,
-                retry=False) # no locking, so no plausible need to retry
+                retry=False)  # no locking, so no plausible need to retry
 
 
 ### Object-Oriented version ###

@@ -348,7 +348,7 @@ class DoLoopTestCase(TestCase):
         loop = self.create_doloop()
         assert_equal(loop.add(42, test=True), 1)
 
-        assert_equal(loop.get(10), []) # wasn't actually added        
+        assert_equal(loop.get(10), [])  # wasn't actually added
 
     def test_add_table_must_be_a_string(self):
         assert_raises(TypeError,
@@ -523,7 +523,7 @@ class DoLoopTestCase(TestCase):
         loop = self.create_doloop()
 
         loop.add([10, 11, 12, 13, 14, 15, 16, 17, 18, 19])
-        
+
         assert_equal(loop.get(5, test=True), [10, 11, 12, 13, 14])
 
         # IDs aren't actually locked since we're in test mode
@@ -599,7 +599,7 @@ class DoLoopTestCase(TestCase):
 
         dbconn.raise_exception_later(OTHER_DB_EXC, num_queries=4)
         assert_raises(mysql_module.OperationalError, loop.get, 5)
-        
+
         dbconn.raise_exception_later(NON_DB_EXC, num_queries=4)
         assert_raises(Exception, loop.get, 5)
 
@@ -725,7 +725,7 @@ class DoLoopTestCase(TestCase):
         # we may or may not count 111 depending on how MySQL is reporting
         # row count. We definitely shouldn't get 0 or 3!
         assert_in(loop.unlock([111, 222]), (1, 2))
-        
+
         assert_equal(loop.unlock(333, auto_add=False), 0)  # no row for 333
 
         assert_equal(loop.get(10), [111, 222])
@@ -1008,10 +1008,10 @@ class DoLoopTestCase(TestCase):
 
         stats = loop.stats(delay_thresholds=(1, 10))
 
-        assert_equal(stats['total'], 10) # 10-19
-        assert_equal(stats['locked'], 2) # 10 and 13
-        assert_equal(stats['bumped'], 3) # 12, 14, and 15
-        assert_equal(stats['updated'], 2) # 11, 12
+        assert_equal(stats['total'], 10)  # 10-19
+        assert_equal(stats['locked'], 2)  # 10 and 13
+        assert_equal(stats['bumped'], 3)  # 12, 14, and 15
+        assert_equal(stats['updated'], 2)  # 11, 12
         assert_equal(stats['new'], 8)  # 13-19
 
         assert_equal(stats['min_id'], 10)
