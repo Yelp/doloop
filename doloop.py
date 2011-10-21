@@ -34,6 +34,11 @@ Run one or more workers (e.g in a crontab), with code like this::
 from __future__ import with_statement
 
 __author__ = 'David Marin <dave@yelp.com>'
+
+__credits__ = [
+    'Jennifer Snyder <jsnyder@yelp.com>',
+]
+
 __version__ = '0.2.0'
 
 import decimal
@@ -425,7 +430,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
       updated, then fetch the ones that have gone the longest without being
       updated.
 
-    Ties are broken by ordering by ID.
+    Ties (e.g. for newly inserted IDs) are broken arbitrarily by the database.
 
     Note that because IDs whose locks have expired are selected first, the
     ``lock_until`` column can also be used to prioritize IDs; see
@@ -451,7 +456,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
 
         SELECT `id` FROM `...`
             WHERE `lock_until` <= UNIX_TIMESTAMP()
-            ORDER BY `lock_until`, `last_updated`, `id`
+            ORDER BY `lock_until`, `last_updated`
             LIMIT ...
             FOR UPDATE
 
@@ -459,7 +464,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
             WHERE `lock_until` IS NULL
             AND (`last_updated` IS NULL
                  OR `last_updated` <= UNIX_TIMESTAMP() - ...)
-            ORDER BY `last_updated`, `id`
+            ORDER BY `last_updated`
             LIMIT ...
             FOR UPDATE
 
@@ -499,7 +504,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
 
     select_bumped = ('SELECT `id` FROM `%s`'
                      ' WHERE `lock_until` <= UNIX_TIMESTAMP()'
-                     ' ORDER BY `lock_until`, `last_updated`, `id`'
+                     ' ORDER BY `lock_until`, `last_updated`'
                      ' LIMIT ?'
                      ' FOR UPDATE') % (table,)
 
@@ -507,7 +512,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
                        ' WHERE `lock_until` IS NULL'
                        ' AND (`last_updated` IS NULL OR'
                        ' `last_updated` <= UNIX_TIMESTAMP() - ?)'
-                       ' ORDER BY `last_updated`, `id`'
+                       ' ORDER BY `last_updated`'
                        ' LIMIT ?'
                        ' FOR UPDATE') % (table,)
 

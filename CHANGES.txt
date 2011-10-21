@@ -8,5 +8,6 @@ v0.2.0, 2010-10-19 -- Learning from experience
    * tested MySQLdb, pymysql, oursql, mysql.connector
    * update()'s return value was useless before; now it's official.
  * read-only mode for testing/dry runs (Issue #9)
+ * breaking ties in get() (e.g. for new IDs) is now left to the database
 
 v0.1.0, 2010-08-15 -- Initial release
