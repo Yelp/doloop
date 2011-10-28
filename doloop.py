@@ -106,9 +106,6 @@ def _is_recoverable(e):
                    for arg in e.args or ())
 
 
-_cursor_type_to_paramstyle = {}  # cache for _paramstyle()
-
-
 def _paramstyle(cursor):
     """Figure out the paramstyle (e.g. qmark, format) used by the
     given database cursor. DBI only specifies that paramstyle needs to be
@@ -117,10 +114,8 @@ def _paramstyle(cursor):
 
     Return None if we can't tell (might be a wrapper object, for example)
     """
-    global _cursor_type_to_paramstyle
-
     cursor_type = type(cursor)
-    if cursor_type not in _cursor_type_to_paramstyle:
+    if cursor_type not in _paramstyle.cache:
         # work backward from the module that the cursor's in
         # for example: mysql.connector.connection, mysql.connector, mysql
 
@@ -139,9 +134,12 @@ def _paramstyle(cursor):
                 paramstyle = getattr(module, 'paramstyle')
                 break
 
-        _cursor_type_to_paramstyle[cursor_type] = paramstyle
+        _paramstyle.cache[cursor_type] = paramstyle
 
-    return _cursor_type_to_paramstyle[cursor_type]
+    return _paramstyle.cache[cursor_type]
+
+
+_paramstyle.cache = {}
 
 
 # names of exceptions raised by various database drivers when you
