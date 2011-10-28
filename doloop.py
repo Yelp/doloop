@@ -34,10 +34,16 @@ Run one or more workers (e.g in a crontab), with code like this::
 from __future__ import with_statement
 
 __author__ = 'David Marin <dave@yelp.com>'
-__version__ = '0.1.0'
 
-import MySQLdb
-import MySQLdb.constants.ER
+__credits__ = [
+    'Jennifer Snyder <jsnyder@yelp.com>',
+]
+
+__version__ = '0.2.0'
+
+import decimal
+import inspect
+import sys
 
 #: One hour, in seconds
 ONE_HOUR = 60 * 60
@@ -48,10 +54,144 @@ ONE_DAY = 60 * 60 * 24
 #: One week, in seconds
 ONE_WEEK = 60 * 60 * 24 * 7
 
-_RECOVERABLE_MYSQL_ERROR_CODES = (
-    MySQLdb.constants.ER.LOCK_DEADLOCK,
-    MySQLdb.constants.ER.LOCK_WAIT_TIMEOUT,
-)
+
+### MySQL module compabitibility ###
+
+# The purpose of this is to be able to suport any DBI-compliant MySQL driver
+# (could be MySQLdb, oursql, PyMySQL, etc.)
+#
+# Refer to the DBI specification (PEP 249) here:
+# from http://www.python.org/dev/peps/pep-0249/
+
+# MySQL error codes. From
+# http://dev.mysql.com/doc/refman/5.5/en/error-messages-server.html
+_LOCK_WAIT_TIMEOUT = 1205
+_LOCK_DEADLOCK = 1213
+
+_RECOVERABLE_MYSQL_ERROR_CODES = set([
+    _LOCK_WAIT_TIMEOUT,
+    _LOCK_DEADLOCK,
+])
+
+# Pretty much every module does things differently, so all we have to go
+# on are the class names laid out in PEP 249.
+_DBI_EXCEPTION_CLASS_NAMES = set([
+    'InterfaceError',
+    'DatabaseError',
+    'DataError',
+    'OperationalError',
+    'IntegrityError',
+    'InternalError',
+    'ProgrammingError',
+    'NotSupportedError',
+])
+
+
+def _is_db_exception(e):
+    """Check if an exception is plausibly from a DBI database driver, based on
+    its name."""
+    return any(cls.__name__ in _DBI_EXCEPTION_CLASS_NAMES
+               for cls in inspect.getmro(e.__class__))
+
+
+def _is_recoverable(e):
+    """Check if an exception is a recoverable MySQL exception."""
+    if not _is_db_exception(e):
+        return
+
+    if hasattr(e, 'errno'):  # mysql.connector
+        return e.errno in _RECOVERABLE_MYSQL_ERROR_CODES
+    else:
+        return any(arg in _RECOVERABLE_MYSQL_ERROR_CODES
+                   for arg in e.args or ())
+
+
+def _paramstyle(cursor):
+    """Figure out the paramstyle (e.g. qmark, format) used by the
+    given database cursor. DBI only specifies that paramstyle needs to be
+    defined by the package containing the cursor, so we need to go hunting
+    for it.
+
+    Return None if we can't tell (might be a wrapper object, for example)
+    """
+    cursor_type = type(cursor)
+    if cursor_type not in _paramstyle.cache:
+        # work backward from the module that the cursor's in
+        # for example: mysql.connector.connection, mysql.connector, mysql
+
+        # inspect.getmodulename() crashes on MySQLdb!
+        cursor_module = inspect.getmodule(cursor_type)
+        cursor_module_name = cursor_module.__name__
+
+        cursor_module_path = cursor_module_name.split('.')
+        paramstyle = None
+
+        for i in range(len(cursor_module_path), 0, -1):
+            module_name = '.'.join(cursor_module_path[:i])
+            module = sys.modules[module_name]
+
+            if hasattr(module, 'paramstyle'):
+                paramstyle = getattr(module, 'paramstyle')
+                break
+
+        _paramstyle.cache[cursor_type] = paramstyle
+
+    return _paramstyle.cache[cursor_type]
+
+
+_paramstyle.cache = {}
+
+
+# names of exceptions raised by various database drivers when you
+# use the wrong paramstyle
+_WRONG_PARAMSTYLE_EXC_NAMES = set([
+    'TypeError',
+    'ProgrammingError',
+])
+
+
+def _execute(cursor, qmark_query, params):
+    """Convert the given query from qmark parameter style to whatever's
+    appropriate for the given cursor, and cursor.execute() it. If we can't
+    figure out the paramstyle, try format, and then qmark.
+
+    We use this everywhere we want to pass parameters to cursor.execute();
+    if there are no parameters, we just use cursor.execute() directly.
+
+    Currently, we only handle the qmark and format styles (seems to be enough).
+
+    This is for internal use by the queries in :py:mod:`doloop` only. It does
+    not correctly handle question marks in string literals or double question
+    marks.
+    """
+    paramstyle = _paramstyle(cursor)
+    format_query = qmark_query.replace('?', '%s')
+
+    if paramstyle == 'qmark':
+        cursor.execute(qmark_query, params)
+
+    elif paramstyle == 'format':
+        cursor.execute(format_query, params)
+
+    elif paramstyle == 'pyformat':
+        # usually if a driver supports pyformat, it supports format too
+        try:
+            cursor.execute(format_query, params)
+        except:
+            raise NotImplementedError(
+                'pyformat paramstyle is unsupported' % paramstyle)
+
+    elif paramstyle is None:
+        # try format (most common) and then qmark
+        try:
+            cursor.execute(format_query, params)
+        except Exception, e:
+            if e.__class__.__name__ not in _WRONG_PARAMSTYLE_EXC_NAMES:
+                raise
+            cursor.execute(qmark_query, params)
+
+    else:
+        raise NotImplementedError('%r paramstyle is unsupported' % paramstyle)
 
 
 ### Utils ###
@@ -68,7 +208,7 @@ def _to_list(x):
 def _run(query, dbconn, level='REPEATABLE READ', read_only=False, retry=True):
     """Do a query in a transaction.
 
-    :param dbconn: a :py:mod:`MySQLdb` connection object
+    :param dbconn: any DBI-compliant MySQL connection object
     :param query: a function which takes a db cursor as its only argument
     :param string level: MySQL transaction isolation level
     :param bool read_only: rollback after the transaction
@@ -112,8 +252,8 @@ def _run_with_rollbacks(query, dbconn, level='REPEATABLE READ',
             except:
                 dbconn.rollback()
                 raise
-        except MySQLdb.OperationalError, e:
-            if not (retry and e.args[0] in _RECOVERABLE_MYSQL_ERROR_CODES):
+        except Exception, e:
+            if not (retry and _is_recoverable(e)):
                 raise
 
 
@@ -135,7 +275,7 @@ def create(dbconn, table, id_type='INT'):
             `last_updated` INT DEFAULT NULL,
             `lock_until` INT DEFAULT NULL,
             PRIMARY KEY (`id`),
-            INDEX (`lock_until`, `last_updated`)
+            KEY `lock_until` (`lock_until`, `last_updated`)
         ) ENGINE=InnoDB
 
     * *id* is the ID of the thing you want to update. It can refer to anything
@@ -147,7 +287,7 @@ def create(dbconn, table, id_type='INT'):
       grabbing the same IDs, and prioritization. See :py:func:`~doloop.get`
       for details.
 
-    :param dbconn: a :py:mod:`MySQLdb` connection object
+    :param dbconn: any DBI-compliant MySQL connection object
     :param str table: name of your task loop table. Something ending in
                       ``_loop`` is recommended.
     :param str id_type: alternate type for the ``id`` field (e.g.
@@ -174,21 +314,22 @@ def sql_for_create(table, id_type='INT'):
     `last_updated` INT default NULL,
     `lock_until` INT default NULL,
     PRIMARY KEY (`id`),
-    INDEX (`lock_until`, `last_updated`)
+    KEY `lock_until` (`lock_until`, `last_updated`)
 ) ENGINE=InnoDB""" % (table, id_type)
 
 
 ### Adding and removing IDs ###
 
-def add(dbconn, table, id_or_ids, updated=False):
+def add(dbconn, table, id_or_ids, updated=False, test=False):
     """Add IDs to this task loop.
 
-    :param dbconn: a :py:mod:`MySQLdb` connection object
+    :param dbconn: any DBI-compliant MySQL connection object
     :param str table: name of your task loop table
     :param id_or_ids: ID or list of IDs to add
     :param updated: Set this to true if these IDs have already been updated;
                     this will ``last_updated`` to the current time rather than
                     ``NULL``.
+    :param test: If ``True``, don't actually write to the database
 
     :return: number of IDs that are new
 
@@ -211,14 +352,14 @@ def add(dbconn, table, id_or_ids, updated=False):
     def query(cursor):
         return _add(cursor, table, ids, updated=updated)
 
-    return _run(query, dbconn)
+    return _run(query, dbconn, read_only=test)
 
 
 def _add(cursor, table, ids, updated=False):
     """Helper function to ``INSERT IGNORE`` IDs into the the table. By default,
     ``last_updated`` and ``lock_until`` will be ``NULL``.
 
-    :param dbconn: a :py:mod:`MySQLdb` connection object
+    :param dbconn: any DBI-compliant MySQL connection object
     :param str table: name of your task loop table
     :param id_or_ids: ID or list of IDs to add
     :param updated: Set ``last_updated`` to the current time rather than
@@ -229,24 +370,25 @@ def _add(cursor, table, ids, updated=False):
 
     if updated:
         cols = '(`id`, `last_updated`)'
-        row_sql = '(%s, UNIX_TIMESTAMP())'
+        row_sql = '(?, UNIX_TIMESTAMP())'
     else:
         cols = '(`id`)'
-        row_sql = '(%s)'
+        row_sql = '(?)'
 
     sql = ('INSERT IGNORE INTO `%s` %s VALUES %s' %
            (table, cols, ', '.join(row_sql for _ in ids)))
 
-    cursor.execute(sql, ids)
+    _execute(cursor, sql, ids)
     return cursor.rowcount
 
 
-def remove(dbconn, table, id_or_ids):
+def remove(dbconn, table, id_or_ids, test=False):
     """Remove IDs from this task loop.
 
-    :param dbconn: a :py:mod:`MySQLdb` connection object
+    :param dbconn: any DBI-compliant MySQL connection object
     :param str table: name of your task loop table
     :param id_or_ids: ID or list of IDs to add
+    :param test: If ``True``, don't actually write to the database
 
     :return: number of IDs removed
 
@@ -264,18 +406,19 @@ def remove(dbconn, table, id_or_ids):
         return 0
 
     sql = 'DELETE FROM `%s` WHERE `id` IN (%s)' % (
-        table, ', '.join('%s' for _ in ids))
+        table, ', '.join('?' for _ in ids))
 
     def query(cursor):
-        cursor.execute(sql, ids)
+        _execute(cursor, sql, ids)
         return cursor.rowcount
 
-    return _run(query, dbconn)
+    return _run(query, dbconn, read_only=test)
 
 
 ### Getting and updating IDs ###
 
-def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
+def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
+        test=False):
     """Get some IDs of things to update, and lock them.
 
     Generally, after you've updated IDs, you'll want to pass them
@@ -289,13 +432,13 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
       updated, then fetch the ones that have gone the longest without being
       updated.
 
-    Ties are broken by ordering by ID.
+    Ties (e.g. for newly inserted IDs) are broken arbitrarily by the database.
 
     Note that because IDs whose locks have expired are selected first, the
     ``lock_until`` column can also be used to prioritize IDs; see
     :py:func:`bump`.
 
-    :param dbconn: a :py:mod:`MySQLdb` connection object
+    :param dbconn: any DBI-compliant MySQL connection object
     :param str table: name of your task loop table
     :param int limit: max number of IDs to fetch
     :param lock_for: a conservative upper bound for how long we expect to take
@@ -304,6 +447,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
     :param min_loop_time: If a job is unlocked, make sure it was last updated
                           at least this many seconds ago, so that we don't spin
                           on the same IDs.
+    :param test: If ``True``, don't actually write to the database
 
     :return: list of IDs
 
@@ -314,7 +458,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
 
         SELECT `id` FROM `...`
             WHERE `lock_until` <= UNIX_TIMESTAMP()
-            ORDER BY `lock_until`, `last_updated`, `id`
+            ORDER BY `lock_until`, `last_updated`
             LIMIT ...
             FOR UPDATE
 
@@ -322,7 +466,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
             WHERE `lock_until` IS NULL
             AND (`last_updated` IS NULL
                  OR `last_updated` <= UNIX_TIMESTAMP() - ...)
-            ORDER BY `last_updated`, `id`
+            ORDER BY `last_updated`
             LIMIT ...
             FOR UPDATE
 
@@ -362,28 +506,28 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
 
     select_bumped = ('SELECT `id` FROM `%s`'
                      ' WHERE `lock_until` <= UNIX_TIMESTAMP()'
-                     ' ORDER BY `lock_until`, `last_updated`, `id`'
-                     ' LIMIT %%s'
-                     ' FOR UPDATE' % (table,))
+                     ' ORDER BY `lock_until`, `last_updated`'
+                     ' LIMIT ?'
+                     ' FOR UPDATE') % (table,)
 
     select_unlocked = ('SELECT `id` FROM `%s`'
                        ' WHERE `lock_until` IS NULL'
                        ' AND (`last_updated` IS NULL OR'
-                       ' `last_updated` <= UNIX_TIMESTAMP() - %%s)'
-                       ' ORDER BY `last_updated`, `id`'
-                       ' LIMIT %%s'
-                       ' FOR UPDATE' % (table,))
+                       ' `last_updated` <= UNIX_TIMESTAMP() - ?)'
+                       ' ORDER BY `last_updated`'
+                       ' LIMIT ?'
+                       ' FOR UPDATE') % (table,)
 
     # this is a function because we need to know how many IDs there are
     def update_sql(ids):
-        return ('UPDATE `%s` SET `lock_until` = UNIX_TIMESTAMP() + %%s'
+        return ('UPDATE `%s` SET `lock_until` = UNIX_TIMESTAMP() + ?'
                 ' WHERE `id` IN (%s)' %
-                (table, ', '.join('%s' for _ in ids)))
+                (table, ', '.join('?' for _ in ids)))
 
     def query(cursor, rollback_and_restart_transaction):
         ids = []
 
-        cursor.execute(select_bumped, [limit])
+        _execute(cursor, select_bumped, [limit])
         ids.extend(row[0] for row in cursor.fetchall())
 
         # if there are no locked IDs (the common case), don't hold on to
@@ -392,31 +536,32 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
             rollback_and_restart_transaction()
 
         if len(ids) < limit:
-            cursor.execute(select_unlocked,
-                           [min_loop_time, limit - len(ids)])
+            _execute(cursor, select_unlocked,
+                     [min_loop_time, limit - len(ids)])
             ids.extend(row[0] for row in cursor.fetchall())
 
         if not ids:
             return []
 
-        cursor.execute(update_sql(ids), [lock_for] + ids)
+        _execute(cursor, update_sql(ids), [lock_for] + ids)
 
         return ids
 
-    return _run_with_rollbacks(query, dbconn)
+    return _run_with_rollbacks(query, dbconn, read_only=test)
 
 
-def did(dbconn, table, id_or_ids, auto_add=True):
+def did(dbconn, table, id_or_ids, auto_add=True, test=False):
     """Mark IDs as updated and unlock them.
 
     Usually, these will be IDs that you grabbed using :py:func:`~doloop.get`,
     but it's perfectly fine to update arbitrary IDs on your own initiative,
     and mark them as done.
 
-    :param dbconn: a :py:mod:`MySQLdb` connection object
+    :param dbconn: any DBI-compliant MySQL connection object
     :param str table: name of your task loop table
     :param id_or_ids: ID or list of IDs that we just updated
     :param bool auto_add: Add any IDs that are not already in the table.
+    :param test: If ``True``, don't actually write to the database
 
     :return: number of rows updated (mostly useful as a sanity check)
 
@@ -443,30 +588,35 @@ def did(dbconn, table, id_or_ids, auto_add=True):
     sql = ('UPDATE `%s` SET `last_updated` = UNIX_TIMESTAMP(),'
            ' `lock_until` = NULL'
            ' WHERE `id` IN (%s)' % (table,
-                                    ', '.join('%s' for _ in ids)))
+                                    ', '.join('?' for _ in ids)))
 
     def query(cursor):
         if auto_add:
             _add(cursor, table, ids)
 
-        cursor.execute(sql, ids)
+        _execute(cursor, sql, ids)
         return cursor.rowcount
 
-    return _run(query, dbconn)
+    return _run(query, dbconn, read_only=test)
 
 
-def unlock(dbconn, table, id_or_ids, auto_add=True):
+def unlock(dbconn, table, id_or_ids, auto_add=True, test=False):
     """Unlock IDs without marking them updated.
 
     Useful if you :py:func:`~doloop.get` IDs, but are then unable or unwilling
     to update them.
 
-    :param dbconn: a :py:mod:`MySQLdb` connection object
+    :param dbconn: any DBI-compliant MySQL connection object
     :param str table: name of your task loop table
     :param id_or_ids: ID or list of IDs
     :param bool auto_add: Add any IDs that are not already in the table.
+    :param test: If ``True``, don't actually write to the database
 
-    :return: number of rows updated (mostly useful as a sanity check)
+    :return: Either: number of rows updated/added *or* number of IDs that
+             correspond to real rows. (MySQL unfortunately returns different
+             row counts for ``UPDATE`` statements depending on how connections
+             are configured.) Don't use this for anything more critical than
+             sanity checks and logging.
 
     Runs this query in ``REPEATABLE READ`` mode, retrying on deadlock or lock
     wait timeout:
@@ -486,29 +636,38 @@ def unlock(dbconn, table, id_or_ids, auto_add=True):
     if not ids:
         return 0
 
-    sql = ('UPDATE `%s` SET `lock_until` = NULL'
-           ' WHERE `id` IN (%s)' % (table, ', '.join('%s' for _ in ids)))
+    update_sql = ('UPDATE `%s` SET `lock_until` = NULL'
+                  ' WHERE `id` IN (%s)' % (table, ', '.join('?' for _ in ids)))
 
     def query(cursor):
         rowcount = 0
 
-        # add to rowcount now, because the UPDATE statement below
-        # won't actually change these new rows
+        # If MySQL is reporting # of rows AFFECTED, we have to keep track
+        # of newly added rows here, since the update below won't affect them.
         if auto_add:
             _add(cursor, table, ids)
             rowcount += cursor.rowcount
 
-        cursor.execute(sql, ids)
+        _execute(cursor, update_sql, ids)
         rowcount += cursor.rowcount
+
+        # on the other hand, if MySQL is reporting # of rows FOUND, we just
+        # double-counted the rows we auto-added.
+        if auto_add and rowcount > len(ids):
+            rowcount = cursor.rowcount  # of rows found by UPDATE statement
+
+        # (The above can still be wrong if ids contains duplicates, but
+        # we can't even know that; for example, the id column could be
+        # a case-insenstive string. Not worth worrying about.)
 
         return rowcount
 
-    return _run(query, dbconn)
+    return _run(query, dbconn, read_only=test)
 
 
 ### Prioritization ###
 
-def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True):
+def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True, test=False):
     """Bump priority of IDs.
 
     Normally we set ``lock_until`` to the current time, which gives them
@@ -527,11 +686,12 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True):
     This function will only ever *decrease* ``lock_until``; it's not
     possible to keep something locked forever by continually bumping it.
 
-    :param dbconn: a :py:mod:`MySQLdb` connection object
+    :param dbconn: any DBI-compliant MySQL connection object
     :param str table: name of your task loop table
     :param id_or_ids: ID or list of IDs
     :param lock_for: Number of seconds that the IDs should stay locked.
     :param bool auto_add: Add any IDs that are not already in the table.
+    :param test: If ``True``, don't actually write to the database
 
     :return: number of IDs bumped (mostly useful as a sanity check)
 
@@ -560,20 +720,20 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True):
     if not ids:
         return 0
 
-    sql = ('UPDATE `%s` SET `lock_until` = UNIX_TIMESTAMP() + %%s'
+    sql = ('UPDATE `%s` SET `lock_until` = UNIX_TIMESTAMP() + ?'
            ' WHERE'
            ' (`lock_until` IS NULL OR'
-           ' `lock_until` > UNIX_TIMESTAMP() + %%s)'
+           ' `lock_until` > UNIX_TIMESTAMP() + ?)'
            ' AND `id` IN (%s)' %
-           (table, ', '.join('%s' for _ in ids)))
+           (table, ', '.join('?' for _ in ids)))
 
     def query(cursor):
         if auto_add:
             _add(cursor, table, ids)
-        cursor.execute(sql, [lock_for, lock_for] + ids)
+        _execute(cursor, sql, [lock_for, lock_for] + ids)
         return cursor.rowcount
 
-    return _run(query, dbconn)
+    return _run(query, dbconn, read_only=test)
 
 
 ### Auditing ###
@@ -581,7 +741,7 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True):
 def check(dbconn, table, id_or_ids):
     """Check the status of particular IDs.
 
-    :param dbconn: a :py:mod:`MySQLdb` connection object
+    :param dbconn: any DBI-compliant MySQL connection object
     :param str table: name of your task loop table
     :param id_or_ids: ID or list of IDs
 
@@ -612,58 +772,64 @@ def check(dbconn, table, id_or_ids):
            ' UNIX_TIMESTAMP() - `last_updated`,'
            ' `lock_until` - UNIX_TIMESTAMP()'
            ' FROM `%s` WHERE `id` IN (%s)' %
-           (table, ', '.join('%s' for _ in ids)))
+           (table, ', '.join('?' for _ in ids)))
 
     def query(cursor):
-        cursor.execute(sql, ids)
+        _execute(cursor, sql, ids)
         return dict((id_, (since_updated, locked_for))
                     for id_, since_updated, locked_for in cursor.fetchall())
 
     return _run(query, dbconn, level='READ COMMITTED', read_only=True)
 
 
-def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
+def stats(dbconn, table, delay_thresholds=None):
     """Get stats on the performance of the task loop as a whole.
 
-    :param dbconn: a :py:mod:`MySQLdb` connection object
+    :param dbconn: any DBI-compliant MySQL connection object
     :param str table: name of your task loop table
-    :param delay_thresholds: controls the *delayed* stat; see below
+    :param delay_thresholds: enables the *delayed* stat; see below
 
-    This breaks down IDs into four categories:
+    It returns a dictionary containing these keys:
 
-    * **locked**: ``lock_until`` is some time in the future
-    * **bumped**: ``lock_until`` is now or some time in the past.
-    * **updated**: ``lock_until`` is ``NULL`` and ``last_updated`` is set
-    * **new**: both ``lock_until`` and ``last_updated`` are ``NULL``
-
-    It returns a dictionary mapping the name of each of these categories to the
-    number of IDs in that category, plus these additional keys:
-
+    * **bumped**: number of IDs where ``lock_until`` is now or in the past.
+      (These IDs have the *highest* priority; see :py:func:`~doloop.get`.)
+    * **delayed**: map from time in seconds, specified in *delay_thresholds*,
+      to number of IDs last updated at least that long ago. If
+      *delay_thresholds* is not set, this is ``{}``.
+    * **locked**: number of IDs where ``lock_until`` is in the future
+    * **min_bump_time**/**max_bump_time**: min/max number of seconds that any
+      ID has been prioritized (``lock_until`` now or in the past)
     * **min_id**/**max_id**: min and max IDs (or ``None`` if table is empty)
     * **min_lock_time**/**max_lock_time**: min/max number of seconds that any
       ID is locked for
-    * **min_bump_time**/**max_bump_time**: min/max number of seconds that any
-      ID has been prioritized (``lock_until`` now or in the past)
     * **min_update_time**/**max_update_time**: min/max number of seconds that
       an unlocked ID has gone since being updated
-    * **delayed**: map from number of seconds to the number of unlocked IDs
-      where the last time they were updated was at least that long ago (we
-      don't include IDs that have never been updated). Default thresholds are
-      :py:data:`~doloop.ONE_DAY` and :py:data:`~doloop.ONE_WEEK`; you can
-      control these with *delay_thresholds*
+    * **new**: number of IDs where ``last_updated`` is ``NULL``
+    * **total**: total number of IDs
+    * **updated**: number of IDs where ``last_updated`` is not ``NULL``
 
     For convenience and readability, all times will be floating point numbers.
-    If there are no IDs in a particular category, the time will be ``0.0``,
-    not ``None``.
+
+    Only *min_id* and *max_id* can be ``None`` (when the table is empty).
+    Everything else defaults to zero.
 
     This function does not require write access to your database.
 
     Don't be surprised if you see minor discrepancies; this function runs
-    several separate queries in ``READ UNCOMMITTED`` mode:
+    four separate queries in ``READ UNCOMMITTED`` mode:
 
     .. code-block:: sql
 
         SELECT MIN(`id`), MAX(`id`) FROM `...`
+
+        SELECT COUNT(*),
+               SUM(IF(`last_updated` IS NULL, 1, 0)),
+               UNIX_TIMESTAMP() - MIN(`last_updated`),
+               UNIX_TIMESTAMP() - MAX(`last_updated`),
+               SUM(IF(`last_updated` <= UNIX_TIMESTAMP() - ..., 1, 0)),
+               SUM(IF(`last_updated` <= UNIX_TIMESTAMP() - ..., 1, 0)),
+               ...
+               FROM `...`
 
         SELECT COUNT(*),
                MIN(`lock_until`) - UNIX_TIMESTAMP(),
@@ -676,35 +842,35 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
                UNIX_TIMESTAMP() - MIN(`lock_until`)
             FROM `...`
             WHERE `lock_until` <= UNIX_TIMESTAMP()
-
-        SELECT COUNT(*),
-               UNIX_TIMESTAMP() - MAX(`last_updated`),
-               UNIX_TIMESTAMP() - MIN(`last_updated`)
-            FROM `...`
-            WHERE `lock_until` IS NULL
-                  AND `last_updated` IS NOT NULL
-
-         SELECT COUNT(*)
-             FROM `...`
-             WHERE `lock_until` IS NULL
-                   AND `last_updated` IS NULL
-
-         SELECT COUNT(*)
-             FROM `...`
-             WHERE `lock_until` IS NULL
-                   AND `last_updated` <= UNIX_TIMESTAMP() - ...
     """
     _check_table_is_a_string(table)
 
-    delay_thresholds = _to_list(delay_thresholds)
+    delay_thresholds = _to_list(delay_thresholds or ())
 
     for threshold in delay_thresholds:
         if not isinstance(threshold, (int, long, float)):
             raise TypeError('delay_thresholds must be numbers, not %r' %
                             (threshold,))
 
-    id_sql = ('SELECT MIN(`id`), MAX(`id`) FROM `%s`' % table)
+    id_sql = 'SELECT MIN(`id`), MAX(`id`) FROM `%s`' % table
 
+    delay_sql = ', SUM(IF(`last_updated` <= UNIX_TIMESTAMP() - ?, 1, 0))'
+
+    # put all the stats that require scanning over the
+    # (`lock_until`, `last_updated`) covering index in the same query
+    updated_sql = ('SELECT COUNT(*),'
+                    # new
+                    ' SUM(IF(`last_updated` IS NULL, 1, 0)),'
+                    # updated
+                    ' UNIX_TIMESTAMP() - MIN(`last_updated`),'
+                    ' UNIX_TIMESTAMP() - MAX(`last_updated`)' +
+                    # delayed
+                    delay_sql * len(delay_thresholds) +
+                    ' FROM `%s`' % table)
+
+    # "locked" and "bumped" queries are cheaper to handle separately;
+    # usually this is a small minority of rows, and this saves us from having
+    # to do another SUM(IF(...)) over the entire table
     locked_sql = ('SELECT COUNT(*), '
                   ' MIN(`lock_until`) - UNIX_TIMESTAMP(),'
                   ' MAX(`lock_until`) - UNIX_TIMESTAMP()'
@@ -715,25 +881,22 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
                   ' UNIX_TIMESTAMP() - MIN(`lock_until`)'
                   ' FROM `%s` WHERE `lock_until` <= UNIX_TIMESTAMP()' % table)
 
-    updated_sql = ('SELECT COUNT(*),'
-                  ' UNIX_TIMESTAMP() - MAX(`last_updated`),'
-                  ' UNIX_TIMESTAMP() - MIN(`last_updated`)'
-                  ' FROM `%s` WHERE `lock_until` IS NULL'
-                  ' AND `last_updated` IS NOT NULL' % table)
-
-    new_sql = ('SELECT COUNT(*)'
-               ' FROM `%s` WHERE `lock_until` IS NULL'
-               ' AND `last_updated` IS NULL' % table)
-
-    delayed_sql = ('SELECT COUNT(*)'
-                  ' FROM `%s` WHERE `lock_until` IS NULL'
-                  ' AND `last_updated` <= UNIX_TIMESTAMP() - %%s' % table)
-
     def query(cursor):
         r = {}  # results to return
 
         cursor.execute(id_sql)
         r['min_id'], r['max_id'] = cursor.fetchall()[0]
+
+        _execute(cursor, updated_sql, delay_thresholds)
+        row = cursor.fetchall()[0]
+        r['total'], r['new'], r['min_update_time'], r['max_update_time'] = (
+            row[:4])
+
+        # unpack "delayed" stats, and convert to float/int
+        r['delayed'] = {}
+        for threshold, amount in zip(delay_thresholds, row[4:]):
+            # (SUM(IF(...)) can produce NULL, so convert None to 0)
+            r['delayed'][float(threshold)] = int(amount or 0)
 
         cursor.execute(locked_sql)
         r['locked'], r['min_lock_time'], r['max_lock_time'] = (
@@ -743,30 +906,24 @@ def stats(dbconn, table, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
         r['bumped'], r['min_bump_time'], r['max_bump_time'] = (
             cursor.fetchall()[0])
 
-        cursor.execute(updated_sql)
-        r['updated'], r['min_update_time'], r['max_update_time'] = (
-            cursor.fetchall()[0])
-
-        cursor.execute(new_sql)
-        r['new'] = cursor.fetchall()[0][0]
-
-        r['delayed'] = {}
-        for threshold in delay_thresholds:
-            cursor.execute(delayed_sql, [threshold])
-            r['delayed'][threshold] = cursor.fetchall()[0][0]
-
-        # make sure times are always floats
+        # make sure times are always floats and other numbers are ints
+        # make sure only "_id" stats can be None
         for key in r:
             if key.endswith('_time'):
-                r[key] = float(r[key] or 0)
+                r[key] = float(r[key] or 0.0)
+            elif r[key] is None and not key.endswith('_id'):
+                r[key] = 0
+            # (SUM(IF(...)) can produce Decimals with MySQLdb)
+            elif isinstance(r[key], (long, decimal.Decimal)):
+                r[key] = int(r[key])
+
+        # compute derived stats now that everything is the right type
+        r['updated'] = r['total'] - r['new']
 
         return r
 
-    # we're running in READ UNCOMMITTED mode, so even though this is a single
-    # "transaction", it doesn't acquire any locks. Just easier to do it this
-    # way than to write separate database logic for this one function.
     return _run(query, dbconn, level='READ UNCOMMITTED', read_only=True,
-                retry=False)
+                retry=False)  # no locking, so no plausible need to retry
 
 
 ### Object-Oriented version ###
@@ -791,10 +948,10 @@ class DoLoop(object):
     def __init__(self, dbconn, table):
         """Wrap a task loop table in an object
 
-        :param dbconn: a :py:mod:`MySQLdb` connection object, or a callable
+        :param dbconn: any DBI-compliant MySQL connection object, or a callable
                        that returns one. If you use a callable, it'll be called
-                       *every time* a method is called on this object (put any
-                       caching/pooling/etc. inside your callable)
+                       *every time* a method is called on this object, so put
+                       any caching/pooling/etc. inside your callable.
         :param string table: name of your task loop table
 
         You can read (but not change) the table name by calling ``self.table``
@@ -811,49 +968,51 @@ class DoLoop(object):
     def table(self):
         return self._table
 
-    def add(self, id_or_ids, updated=False):
+    def add(self, id_or_ids, updated=False, test=False):
         """Add IDs to this task loop.
 
         See :py:func:`~doloop.add` for details.
         """
-        return add(self._make_dbconn(), self._table, id_or_ids, updated)
+        return add(self._make_dbconn(), self._table, id_or_ids, updated, test)
 
-    def remove(self, id_or_ids, updated=False):
+    def remove(self, id_or_ids, updated=False, test=False):
         """Remove IDs from this task loop.
 
         See :py:func:`~doloop.remove` for details.
         """
-        return remove(self._make_dbconn(), self._table, id_or_ids)
+        return remove(self._make_dbconn(), self._table, id_or_ids, test)
 
-    def get(self, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR):
+    def get(self, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
+            test=False):
         """Get some IDs of things to update and lock them.
 
         See :py:func:`~doloop.get` for details.
         """
-        return get(
-            self._make_dbconn(), self._table, limit, lock_for, min_loop_time)
+        return get(self._make_dbconn(), self._table, limit, lock_for,
+                   min_loop_time, test)
 
-    def did(self, id_or_ids, auto_add=True):
+    def did(self, id_or_ids, auto_add=True, test=False):
         """Mark IDs as updated and unlock them.
 
         See :py:func:`~doloop.did` for details.
         """
-        return did(self._make_dbconn(), self._table, id_or_ids, auto_add)
+        return did(self._make_dbconn(), self._table, id_or_ids, auto_add, test)
 
-    def unlock(self, id_or_ids, auto_add=True):
+    def unlock(self, id_or_ids, auto_add=True, test=False):
         """Unlock IDs without marking them updated.
 
         See :py:func:`~doloop.unlock` for details.
         """
-        return unlock(self._make_dbconn(), self._table, id_or_ids, auto_add)
+        return unlock(self._make_dbconn(), self._table, id_or_ids, auto_add,
+                      test)
 
-    def bump(self, id_or_ids, lock_for=0, auto_add=True):
+    def bump(self, id_or_ids, lock_for=0, auto_add=True, test=False):
         """Bump priority of IDs.
 
         See :py:func:`~doloop.bump` for details.
         """
-        return bump(
-            self._make_dbconn(), self._table, id_or_ids, lock_for, auto_add)
+        return bump(self._make_dbconn(), self._table, id_or_ids, lock_for,
+                    auto_add, test)
 
     def check(self, id_or_ids):
         """Check the status of particular IDs.

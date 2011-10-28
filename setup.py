@@ -21,7 +21,6 @@ setup(
         'Topic :: Database',
     ],
     description='Task loop for keeping things updated',
-    install_requires=['MySQL-python'],
     license='Apache',
     long_description=open('README.rst').read(),
     name='doloop',
