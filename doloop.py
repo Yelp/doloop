@@ -159,6 +159,10 @@ def _execute(cursor, qmark_query, params):
     if there are no parameters, we just use cursor.execute() directly.
 
     Currently, we only handle the qmark and format styles (seems to be enough).
+
+    This is for internal use by the queries in :py:mod:`doloop` only. It does
+    not correctly handle question marks in string literals or double question
+    marks.
     """
     paramstyle = _paramstyle(cursor)
     format_query = qmark_query.replace('?', '%s')
