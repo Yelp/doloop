@@ -791,7 +791,8 @@ def stats(dbconn, table, delay_thresholds=None):
 
     It returns a dictionary containing these keys:
 
-    * **bumped**: number of IDs where ``lock_until`` is now or in the past
+    * **bumped**: number of IDs where ``lock_until`` is now or in the past.
+      (These IDs have the *highest* priority; see :py:func:`~doloop.get`.)
     * **delayed**: map from time in seconds, specified in *delay_thresholds*,
       to number of IDs last updated at least that long ago. If
       *delay_thresholds* is not set, this is ``{}``.
