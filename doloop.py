@@ -824,8 +824,8 @@ def stats(dbconn, table, delay_thresholds=None):
 
         SELECT COUNT(*),
                SUM(IF(`last_updated` IS NULL, 1, 0)),
-               UNIX_TIMESTAMP() - MIN(`last_updated`),
                UNIX_TIMESTAMP() - MAX(`last_updated`),
+               UNIX_TIMESTAMP() - MIN(`last_updated`),
                SUM(IF(`last_updated` <= UNIX_TIMESTAMP() - ..., 1, 0)),
                SUM(IF(`last_updated` <= UNIX_TIMESTAMP() - ..., 1, 0)),
                ...
@@ -862,8 +862,8 @@ def stats(dbconn, table, delay_thresholds=None):
                     # new
                     ' SUM(IF(`last_updated` IS NULL, 1, 0)),'
                     # updated
-                    ' UNIX_TIMESTAMP() - MIN(`last_updated`),'
-                    ' UNIX_TIMESTAMP() - MAX(`last_updated`)' +
+                    ' UNIX_TIMESTAMP() - MAX(`last_updated`),'
+                    ' UNIX_TIMESTAMP() - MIN(`last_updated`)' +
                     # delayed
                     delay_sql * len(delay_thresholds) +
                     ' FROM `%s`' % table)

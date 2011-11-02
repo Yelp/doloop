@@ -23,6 +23,7 @@ import warnings
 
 from testify import TestCase
 from testify import assert_equal
+from testify import assert_gt
 from testify import assert_gte
 from testify import assert_in
 from testify import assert_lte
@@ -1005,14 +1006,16 @@ class DoLoopTestCase(TestCase):
         loop.bump(12)
         loop.bump(13, lock_for=60)
         loop.bump([14, 15], lock_for=-60)
+        assert_equal(loop.get(1), [14])
+        loop.did(14)
 
         stats = loop.stats(delay_thresholds=(1, 10))
 
         assert_equal(stats['total'], 10)  # 10-19
-        assert_equal(stats['locked'], 2)  # 10 and 13
-        assert_equal(stats['bumped'], 3)  # 12, 14, and 15
-        assert_equal(stats['updated'], 2)  # 11, 12
-        assert_equal(stats['new'], 8)  # 13-19
+        assert_equal(stats['locked'], 2)  # 10, 13
+        assert_equal(stats['bumped'], 2)  # 12, 15
+        assert_equal(stats['updated'], 3)  # 11, 12, 14
+        assert_equal(stats['new'], 7)  # 13, 15-19
 
         assert_equal(stats['min_id'], 10)
         assert_equal(stats['max_id'], 19)
@@ -1028,10 +1031,11 @@ class DoLoopTestCase(TestCase):
         assert_gte(stats['max_bump_time'], 60)  # 14 and 15
         assert_lte(stats['max_bump_time'], 65)
 
-        assert_gte(stats['min_update_time'], 1)  # 10
-        assert_lte(stats['min_update_time'], 6)
+        assert_gte(stats['min_update_time'], 0)  # 14
+        assert_lte(stats['min_update_time'], 5)
         assert_gte(stats['max_update_time'], 1)  # 10
         assert_lte(stats['max_update_time'], 6)
+        assert_gt(stats['max_update_time'], stats['min_update_time'])
 
         assert_equal(stats['delayed'], {1: 2, 10: 0})  # 11, 12
 
