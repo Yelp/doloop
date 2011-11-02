@@ -973,10 +973,32 @@ class DoLoopTestCase(TestCase):
 
     ### tests for stats() ###
 
+    def _sanity_check_stats(self, stats):
+        """Type-check the results of stats, and make sure "min_"
+        stats are <= their corresponding "max_" stats."""
+        # type checking
+        for key, value in stats.iteritems():
+            if key.endswith('_time'):
+                assert isinstance(value, float)
+            # IDs can be anything; we'll check delayed below
+            elif not key.endswith('_id') and key != 'delayed':
+                assert isinstance(value, int)
+
+            # make sure min_ and max_ are in the right order (Issue #12)
+            if key.startswith('min_'):
+                max_stat_value = stats['max_' + key[4:]]
+                assert_lte(value, max_stat_value)
+
+        # more type checking for delayed stats
+        for threshold, amount in stats['delayed'].iteritems():
+            assert isinstance(threshold, float)
+            assert isinstance(amount, int)
+
     def test_stats_empty(self):
         loop = self.create_doloop()
 
         stats = loop.stats()
+        self._sanity_check_stats(stats)
 
         assert_equal(stats, {
             'total': 0,
@@ -1010,6 +1032,7 @@ class DoLoopTestCase(TestCase):
         loop.did(14)
 
         stats = loop.stats(delay_thresholds=(1, 10))
+        self._sanity_check_stats(stats)
 
         assert_equal(stats['total'], 10)  # 10-19
         assert_equal(stats['locked'], 2)  # 10, 13
@@ -1018,7 +1041,9 @@ class DoLoopTestCase(TestCase):
         assert_equal(stats['new'], 7)  # 13, 15-19
 
         assert_equal(stats['min_id'], 10)
+        assert isinstance(stats['min_id'], int)
         assert_equal(stats['max_id'], 19)
+        assert isinstance(stats['max_id'], int)
 
         # this test should work even if it experienced up to 5 seconds of delay
         assert_gte(stats['min_lock_time'], 55)  # 13
@@ -1038,17 +1063,6 @@ class DoLoopTestCase(TestCase):
         assert_gt(stats['max_update_time'], stats['min_update_time'])
 
         assert_equal(stats['delayed'], {1: 2, 10: 0})  # 11, 12
-
-        # check types
-        for key, value in stats.iteritems():
-            if key.endswith('_time'):
-                assert isinstance(value, float)
-            elif key != 'delayed':
-                assert isinstance(value, int)
-
-        for threshold, amount in stats['delayed'].iteritems():
-            assert isinstance(threshold, float)
-            assert isinstance(amount, int)
 
     def test_stats_table_must_be_a_string(self):
         assert_raises(TypeError,
