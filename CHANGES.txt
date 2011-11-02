@@ -1,3 +1,6 @@
+v0.2.1, 2010-11-02 -- stats() bugfix
+ * min_update_time and max_update_time are no longer reversed (Issue #12)
+
 v0.2.0, 2010-10-19 -- Learning from experience
  * Updates to stats()
    * Cleaner output (Issue #4)
