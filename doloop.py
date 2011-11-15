@@ -39,11 +39,13 @@ __credits__ = [
     'Jennifer Snyder <jsnyder@yelp.com>',
 ]
 
-__version__ = '0.2.1'
+__version__ = '0.3.0-dev'
 
 import decimal
 import inspect
 import sys
+import traceback
+import warnings
 
 #: One hour, in seconds
 ONE_HOUR = 60 * 60
@@ -68,10 +70,6 @@ ONE_WEEK = 60 * 60 * 24 * 7
 _LOCK_WAIT_TIMEOUT = 1205
 _LOCK_DEADLOCK = 1213
 
-_RECOVERABLE_MYSQL_ERROR_CODES = set([
-    _LOCK_WAIT_TIMEOUT,
-    _LOCK_DEADLOCK,
-])
 
 # Pretty much every module does things differently, so all we have to go
 # on are the class names laid out in PEP 249.
@@ -87,23 +85,33 @@ _DBI_EXCEPTION_CLASS_NAMES = set([
 ])
 
 
-def _is_db_exception(e):
+class DoLoopWarning(Warning):
+    """Parent class for all warnings emitted by doloop"""
+    pass
+
+
+class DeadlockWarning(DoLoopWarning):
+    """Warning emitted when we encounter a deadlock"""
+    pass
+
+
+class LockWaitTimeoutWarning(DoLoopWarning):
+    """Warning emitted when we encounter a lock wait timeout"""
+    pass
+
+
+def _is_db_exception(e, errno=None):
     """Check if an exception is plausibly from a DBI database driver, based on
-    its name."""
-    return any(cls.__name__ in _DBI_EXCEPTION_CLASS_NAMES
-               for cls in inspect.getmro(e.__class__))
-
-
-def _is_recoverable(e):
-    """Check if an exception is a recoverable MySQL exception."""
-    if not _is_db_exception(e):
-        return
+    its name. Additionally, if errno is set, check that it matches that
+    error code."""
+    if not any(cls.__name__ in _DBI_EXCEPTION_CLASS_NAMES
+               for cls in inspect.getmro(e.__class__)):
+        return False
 
     if hasattr(e, 'errno'):  # mysql.connector
-        return e.errno in _RECOVERABLE_MYSQL_ERROR_CODES
+        return e.errno == errno
     else:
-        return any(arg in _RECOVERABLE_MYSQL_ERROR_CODES
-                   for arg in e.args or ())
+        return any(arg == errno for arg in e.args or ())
 
 
 def _paramstyle(cursor):
@@ -253,8 +261,27 @@ def _run_with_rollbacks(query, dbconn, level='REPEATABLE READ',
                 dbconn.rollback()
                 raise
         except Exception, e:
-            if not (retry and _is_recoverable(e)):
+            if retry:
+                if _is_db_exception(e, _LOCK_DEADLOCK):
+                    warnings.warn(repr(e), DeadlockWarning,
+                                  stacklevel=_stacklevel())
+                elif _is_db_exception(e, _LOCK_WAIT_TIMEOUT):
+                    warnings.warn(repr(e), LockWaitTimeoutWarning,
+                                  stacklevel=_stacklevel())
+                else:
+                    raise
+            else:
                 raise
+
+
+def _stacklevel():
+    """Figure out how far up the call stack to go to escape this module.
+    Used for issuing warnings."""
+    for i, frame in enumerate(reversed(traceback.extract_stack())):
+        if frame[0] != __file__ and frame[0] != __file__[:-1]:
+            return i
+
+    return 1
 
 
 def _check_table_is_a_string(table):

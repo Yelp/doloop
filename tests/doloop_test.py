@@ -129,7 +129,12 @@ class ExceptionRaisingCursorWrapper(object):
 
 class DoLoopTestCase(TestCase):
 
-    # we put all these tests in the same TestCase so we
+    # we put all these tests in the same TestCase so we only have to
+    # start up MySQL once
+
+    @class_setup
+    def suppress_warnings(self):
+        warnings.simplefilter('ignore')
 
     @class_setup
     def start_mysql_daemon(self):
@@ -213,14 +218,10 @@ class DoLoopTestCase(TestCase):
     def create_empty_doloop_db(self):
         """Create an empty database named `doloop`"""
         dbconn = self._connect(unix_socket=self.mysql_socket)
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore')
-            # oursql apparently doesn't handle warnings correctly with
-            # mysqld 5.1.58?
-            try:
-                dbconn.cursor().execute('DROP DATABASE IF EXISTS `doloop`')
-            except:
-                pass
+        try:
+            dbconn.cursor().execute('DROP DATABASE IF EXISTS `doloop`')
+        except:
+            pass
         dbconn.cursor().execute('CREATE DATABASE `doloop`')
 
 
