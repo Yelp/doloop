@@ -23,11 +23,12 @@ from multiprocessing import Process
 
 # these settings almost guarantee deadlocks
 DB_PARAMS = {'db': 'test'}
-TABLE = 'concurrency_test_loop'
-NUM_IDS = 100
-NUM_WORKERS = 50
+TABLE = 'concurrency_test_loop_2'
+NUM_IDS = 10000
+NUM_WORKERS = 100
 BATCH_SIZE = 10
 IDS_PER_WORKER = 500
+SLEEP_TIME = 1.0
 
 
 def do_work():
@@ -38,12 +39,16 @@ def do_work():
     while ids_processed < IDS_PER_WORKER:
         sys.stdout.flush()
         ids = loop.get(BATCH_SIZE, min_loop_time=0)
+
+        time.sleep(SLEEP_TIME)
+
         loop.did(ids)
 
         ids_processed += BATCH_SIZE
 
-        sys.stdout.write('processed %d of %d IDs\r' %
+        sys.stdout.write('processed %d of %d IDs\n' %
                          (ids_processed, IDS_PER_WORKER))
+        sys.stdout.flush()
 
         # do a little prioritization
         loop.bump(random.randint(0, NUM_IDS - 1))
