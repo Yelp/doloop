@@ -28,7 +28,7 @@ NUM_IDS = 10000
 NUM_WORKERS = 100
 BATCH_SIZE = 10
 IDS_PER_WORKER = 500
-SLEEP_TIME = 1.0
+SLEEP_TIME = 0.0#1.0
 
 
 def do_work():
@@ -37,7 +37,6 @@ def do_work():
     ids_processed = 0
 
     while ids_processed < IDS_PER_WORKER:
-        sys.stdout.flush()
         ids = loop.get(BATCH_SIZE, min_loop_time=0)
 
         time.sleep(SLEEP_TIME)
@@ -46,9 +45,8 @@ def do_work():
 
         ids_processed += BATCH_SIZE
 
-        sys.stdout.write('processed %d of %d IDs\n' %
+        sys.stderr.write('processed %d of %d IDs\n' %
                          (ids_processed, IDS_PER_WORKER))
-        sys.stdout.flush()
 
         # do a little prioritization
         loop.bump(random.randint(0, NUM_IDS - 1))
@@ -56,20 +54,20 @@ def do_work():
 
 def main():
     dbconn = MySQLdb.connect(**DB_PARAMS)
-    print 'creating table'
+    sys.stderr.write('creating table\n')
 
     dbconn.cursor().execute('DROP TABLE IF EXISTS `%s`' % TABLE)
     doloop.create(dbconn, TABLE)
 
     loop = doloop.DoLoop(dbconn, TABLE)
 
-    print 'adding IDs'
+    sys.stderr.write('adding IDs\n')
 
     for start in xrange(0, NUM_IDS, BATCH_SIZE):
         ids = range(start, min(start+BATCH_SIZE, NUM_IDS))
         loop.add(ids)
 
-    print 'spawning %d workers' % NUM_WORKERS
+    sys.stderr.write('spawning %d workers\n' % NUM_WORKERS)
 
     workers = []
     for _ in xrange(NUM_WORKERS):
@@ -79,7 +77,7 @@ def main():
     for worker in workers:
         worker.start()
 
-    print 'waiting for workers to finish'
+    sys.stderr.write('waiting for workers to finish\n')
 
     total_time = 0.0
     for workers in workers:
@@ -88,11 +86,13 @@ def main():
 
     total_ids = NUM_WORKERS * IDS_PER_WORKER
     
-    print '%d workers took %.1fs (cumulative) to process %d * %d = %d IDs' % (
-        NUM_WORKERS, total_time, NUM_WORKERS, IDS_PER_WORKER, total_ids)
+    sys.stderr.write('%d workers took %.1fs (cumulative) to process'
+                     ' %d * %d = %d IDs\n' % (
+        NUM_WORKERS, total_time, NUM_WORKERS, IDS_PER_WORKER, total_ids))
 
-    print '%d IDs / %.1fs = %.1f IDs/sec' % (
-        total_ids, total_time, total_ids / total_time)
+    sys.stderr.write('%d IDs / %.1fs = %.1f IDs/sec\n' % (
+        total_ids, total_time, total_ids / total_time))
+
 
 if __name__ == '__main__':
     main()

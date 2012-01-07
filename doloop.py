@@ -213,7 +213,8 @@ def _to_list(x):
         return [x]
 
 
-def _run(query, dbconn, level='REPEATABLE READ', read_only=False, retry=True):
+def _run(query, dbconn, level='REPEATABLE READ', read_only=False, retry=True,
+         table_to_lock=None):
     """Do a query in a transaction.
 
     :param dbconn: any DBI-compliant MySQL connection object
@@ -227,11 +228,11 @@ def _run(query, dbconn, level='REPEATABLE READ', read_only=False, retry=True):
     """
     return _run_with_rollbacks(lambda cursor, _: query(cursor),
                                dbconn, level=level, read_only=read_only,
-                               retry=retry)
+                               retry=retry, table_to_lock=table_to_lock)
 
 
 def _run_with_rollbacks(query, dbconn, level='REPEATABLE READ',
-                        read_only=False, retry=True):
+                        read_only=False, retry=True, table_to_lock=None):
     """Like :py:func:`~doloop._run`, except query takes an additional
     argument which is a function that can be called to roll back and restart
     the transaction.
@@ -240,8 +241,13 @@ def _run_with_rollbacks(query, dbconn, level='REPEATABLE READ',
         dbconn.rollback()
 
         cursor = dbconn.cursor()
-        cursor.execute('SET TRANSACTION ISOLATION LEVEL ' + level)
-        cursor.execute('START TRANSACTION')
+
+        if table_to_lock:
+            cursor.execute('SET autocommit = 0')
+            cursor.execute('LOCK TABLES `%s` WRITE' % table_to_lock)
+        else:
+            cursor.execute('SET TRANSACTION ISOLATION LEVEL ' + level)
+            cursor.execute('START TRANSACTION')
 
     while True:
         try:
@@ -251,6 +257,9 @@ def _run_with_rollbacks(query, dbconn, level='REPEATABLE READ',
                 result = query(
                     dbconn.cursor(), rollback_and_restart_transaction)
 
+                if table_to_lock:
+                    dbconn.cursor().execute('UNLOCK TABLES')
+
                 if read_only:
                     dbconn.rollback()
                 else:
@@ -258,6 +267,8 @@ def _run_with_rollbacks(query, dbconn, level='REPEATABLE READ',
 
                 return result
             except:
+                if table_to_lock:
+                    dbconn.cursor().execute('UNLOCK TABLES')
                 dbconn.rollback()
                 raise
         except Exception, e:
@@ -379,7 +390,7 @@ def add(dbconn, table, id_or_ids, updated=False, test=False):
     def query(cursor):
         return _add(cursor, table, ids, updated=updated)
 
-    return _run(query, dbconn, read_only=test)
+    return _run(query, dbconn, read_only=test, table_to_lock=table)
 
 
 def _add(cursor, table, ids, updated=False):
@@ -436,6 +447,7 @@ def remove(dbconn, table, id_or_ids, test=False):
         table, ', '.join('?' for _ in ids))
 
     def query(cursor):
+        cursor.execute('LOCK TABLE `%s` WRITE' % table)
         _execute(cursor, sql, ids)
         return cursor.rowcount
 
@@ -487,7 +499,6 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
             WHERE `lock_until` <= UNIX_TIMESTAMP()
             ORDER BY `lock_until`, `last_updated`
             LIMIT ...
-            FOR UPDATE
 
         SELECT `id` FROM `...`
             WHERE `lock_until` IS NULL
@@ -495,7 +506,6 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
                  OR `last_updated` <= UNIX_TIMESTAMP() - ...)
             ORDER BY `last_updated`
             LIMIT ...
-            FOR UPDATE
 
         UPDATE `...` SET `lock_until` = UNIX_TIMESTAMP() + ...
             WHERE `id` IN (...)
@@ -534,16 +544,14 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
     select_bumped = ('SELECT `id` FROM `%s`'
                      ' WHERE `lock_until` <= UNIX_TIMESTAMP()'
                      ' ORDER BY `lock_until`, `last_updated`'
-                     ' LIMIT ?'
-                     ' FOR UPDATE') % (table,)
+                     ' LIMIT ?') % (table,)
 
     select_unlocked = ('SELECT `id` FROM `%s`'
                        ' WHERE `lock_until` IS NULL'
                        ' AND (`last_updated` IS NULL OR'
                        ' `last_updated` <= UNIX_TIMESTAMP() - ?)'
                        ' ORDER BY `last_updated`'
-                       ' LIMIT ?'
-                       ' FOR UPDATE') % (table,)
+                       ' LIMIT ?') % (table,)
 
     # this is a function because we need to know how many IDs there are
     def update_sql(ids):
@@ -559,8 +567,8 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
 
         # if there are no locked IDs (the common case), don't hold on to
         # the gap lock; we only need to lock actual rows
-        if not ids:
-            rollback_and_restart_transaction()
+        #if not ids:
+        #    rollback_and_restart_transaction()
 
         if len(ids) < limit:
             _execute(cursor, select_unlocked,
@@ -574,7 +582,8 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
 
         return ids
 
-    return _run_with_rollbacks(query, dbconn, read_only=test)
+    return _run_with_rollbacks(query, dbconn, read_only=test,
+                               table_to_lock=table)
 
 
 def did(dbconn, table, id_or_ids, auto_add=True, test=False):
@@ -624,7 +633,7 @@ def did(dbconn, table, id_or_ids, auto_add=True, test=False):
         _execute(cursor, sql, ids)
         return cursor.rowcount
 
-    return _run(query, dbconn, read_only=test)
+    return _run(query, dbconn, read_only=test, table_to_lock=table)
 
 
 def unlock(dbconn, table, id_or_ids, auto_add=True, test=False):
@@ -689,7 +698,7 @@ def unlock(dbconn, table, id_or_ids, auto_add=True, test=False):
 
         return rowcount
 
-    return _run(query, dbconn, read_only=test)
+    return _run(query, dbconn, read_only=test, table_to_lock=table)
 
 
 ### Prioritization ###
@@ -760,7 +769,7 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True, test=False):
         _execute(cursor, sql, [lock_for, lock_for] + ids)
         return cursor.rowcount
 
-    return _run(query, dbconn, read_only=test)
+    return _run(query, dbconn, read_only=test, table_to_lock=table)
 
 
 ### Auditing ###
@@ -806,7 +815,8 @@ def check(dbconn, table, id_or_ids):
         return dict((id_, (since_updated, locked_for))
                     for id_, since_updated, locked_for in cursor.fetchall())
 
-    return _run(query, dbconn, level='READ COMMITTED', read_only=True)
+    return _run(query, dbconn, level='READ COMMITTED', read_only=True,
+                table_to_lock=table)
 
 
 def stats(dbconn, table, delay_thresholds=None):
