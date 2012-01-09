@@ -44,8 +44,6 @@ __version__ = '0.3.0-dev'
 import decimal
 import inspect
 import sys
-import traceback
-import warnings
 
 #: One hour, in seconds
 ONE_HOUR = 60 * 60
@@ -64,55 +62,6 @@ ONE_WEEK = 60 * 60 * 24 * 7
 #
 # Refer to the DBI specification (PEP 249) here:
 # from http://www.python.org/dev/peps/pep-0249/
-
-# MySQL error codes. From
-# http://dev.mysql.com/doc/refman/5.5/en/error-messages-server.html
-_LOCK_WAIT_TIMEOUT = 1205
-_LOCK_DEADLOCK = 1213
-
-
-# Pretty much every module does things differently, so all we have to go
-# on are the class names laid out in PEP 249.
-_DBI_EXCEPTION_CLASS_NAMES = set([
-    'InterfaceError',
-    'DatabaseError',
-    'DataError',
-    'OperationalError',
-    'IntegrityError',
-    'InternalError',
-    'ProgrammingError',
-    'NotSupportedError',
-])
-
-
-class DoLoopWarning(Warning):
-    """Parent class for all warnings emitted by doloop"""
-    pass
-
-
-class DeadlockWarning(DoLoopWarning):
-    """Warning emitted when we encounter a deadlock"""
-    pass
-
-
-class LockWaitTimeoutWarning(DoLoopWarning):
-    """Warning emitted when we encounter a lock wait timeout"""
-    pass
-
-
-def _is_db_exception(e, errno=None):
-    """Check if an exception is plausibly from a DBI database driver, based on
-    its name. Additionally, if errno is set, check that it matches that
-    error code."""
-    if not any(cls.__name__ in _DBI_EXCEPTION_CLASS_NAMES
-               for cls in inspect.getmro(e.__class__)):
-        return False
-
-    if hasattr(e, 'errno'):  # mysql.connector
-        return e.errno == errno
-    else:
-        return any(arg == errno for arg in e.args or ())
-
 
 def _paramstyle(cursor):
     """Figure out the paramstyle (e.g. qmark, format) used by the
@@ -213,86 +162,53 @@ def _to_list(x):
         return [x]
 
 
-def _run(query, dbconn, level='REPEATABLE READ', read_only=False, retry=True,
-         table_to_lock=None):
-    """Do a query in a transaction.
+def _run(query, dbconn, lock=None, lock_mode='WRITE', read_only=False):
+    """Run a query, optionally locking one or more tables. If an exception
+    is thrown, we unlock the tables and roll back the transaction
+    before re-raising the exception.
 
     :param dbconn: any DBI-compliant MySQL connection object
     :param query: a function which takes a db cursor as its only argument
-    :param string level: MySQL transaction isolation level
-    :param bool read_only: rollback after the transaction
-    :param bool retry: retry on deadlock or lock wait timeout
+    :param lock: a list of tables to lock. If this is empty or ``None``,
+                 we run the query in ``READ UNCOMMITTED`` mode instead.
+    :param string lock_mode: either ``'READ'`` or ``'WRITE'`` (this is
+                             separate from from *read_only* because
+                             *read_only* is mostly used for testing)
+    :param bool read_only: if true, roll back after running the query
 
     If there is already a transaction in progress (i.e. you're using
     *dbconn* for non-:py:mod:`doloop` things), it'll be rolled back.
     """
-    return _run_with_rollbacks(lambda cursor, _: query(cursor),
-                               dbconn, level=level, read_only=read_only,
-                               retry=retry, table_to_lock=table_to_lock)
+    dbconn.rollback()
 
+    cursor = dbconn.cursor()
 
-def _run_with_rollbacks(query, dbconn, level='REPEATABLE READ',
-                        read_only=False, retry=True, table_to_lock=None):
-    """Like :py:func:`~doloop._run`, except query takes an additional
-    argument which is a function that can be called to roll back and restart
-    the transaction.
-    """
-    def rollback_and_restart_transaction():
-        dbconn.rollback()
-
-        cursor = dbconn.cursor()
-
-        if table_to_lock:
+    try:
+        if lock:
             cursor.execute('SET autocommit = 0')
-            cursor.execute('LOCK TABLES `%s` WRITE' % table_to_lock)
+            cursor.execute(
+                'LOCK TABLES ' + ', '.join(
+                    '`%s` %s' % (table, lock_mode) for table in lock))
         else:
-            cursor.execute('SET TRANSACTION ISOLATION LEVEL ' + level)
+            cursor.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
             cursor.execute('START TRANSACTION')
 
-    while True:
-        try:
-            try:
-                rollback_and_restart_transaction()
+        result = query(dbconn.cursor())
 
-                result = query(
-                    dbconn.cursor(), rollback_and_restart_transaction)
+        if read_only:
+            dbconn.rollback()
+        else:
+            dbconn.commit()
 
-                if table_to_lock:
-                    dbconn.cursor().execute('UNLOCK TABLES')
+        if lock:
+            dbconn.cursor().execute('UNLOCK TABLES')
 
-                if read_only:
-                    dbconn.rollback()
-                else:
-                    dbconn.commit()
-
-                return result
-            except:
-                if table_to_lock:
-                    dbconn.cursor().execute('UNLOCK TABLES')
-                dbconn.rollback()
-                raise
-        except Exception, e:
-            if retry:
-                if _is_db_exception(e, _LOCK_DEADLOCK):
-                    warnings.warn(repr(e), DeadlockWarning,
-                                  stacklevel=_stacklevel())
-                elif _is_db_exception(e, _LOCK_WAIT_TIMEOUT):
-                    warnings.warn(repr(e), LockWaitTimeoutWarning,
-                                  stacklevel=_stacklevel())
-                else:
-                    raise
-            else:
-                raise
-
-
-def _stacklevel():
-    """Figure out how far up the call stack to go to escape this module.
-    Used for issuing warnings."""
-    for i, frame in enumerate(reversed(traceback.extract_stack())):
-        if frame[0] != __file__ and frame[0] != __file__[:-1]:
-            return i
-
-    return 1
+        return result
+    except:
+        if lock:
+            dbconn.cursor().execute('UNLOCK TABLES')
+        dbconn.rollback()
+        raise
 
 
 def _check_table_is_a_string(table):
@@ -390,7 +306,7 @@ def add(dbconn, table, id_or_ids, updated=False, test=False):
     def query(cursor):
         return _add(cursor, table, ids, updated=updated)
 
-    return _run(query, dbconn, read_only=test, table_to_lock=table)
+    return _run(query, dbconn, lock=[table], read_only=test)
 
 
 def _add(cursor, table, ids, updated=False):
@@ -451,7 +367,7 @@ def remove(dbconn, table, id_or_ids, test=False):
         _execute(cursor, sql, ids)
         return cursor.rowcount
 
-    return _run(query, dbconn, read_only=test)
+    return _run(query, dbconn, lock=[table], read_only=test)
 
 
 ### Getting and updating IDs ###
@@ -559,16 +475,11 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
                 ' WHERE `id` IN (%s)' %
                 (table, ', '.join('?' for _ in ids)))
 
-    def query(cursor, rollback_and_restart_transaction):
+    def query(cursor):
         ids = []
 
         _execute(cursor, select_bumped, [limit])
         ids.extend(row[0] for row in cursor.fetchall())
-
-        # if there are no locked IDs (the common case), don't hold on to
-        # the gap lock; we only need to lock actual rows
-        #if not ids:
-        #    rollback_and_restart_transaction()
 
         if len(ids) < limit:
             _execute(cursor, select_unlocked,
@@ -582,8 +493,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
 
         return ids
 
-    return _run_with_rollbacks(query, dbconn, read_only=test,
-                               table_to_lock=table)
+    return _run(query, dbconn, lock=[table], read_only=test)
 
 
 def did(dbconn, table, id_or_ids, auto_add=True, test=False):
@@ -633,7 +543,7 @@ def did(dbconn, table, id_or_ids, auto_add=True, test=False):
         _execute(cursor, sql, ids)
         return cursor.rowcount
 
-    return _run(query, dbconn, read_only=test, table_to_lock=table)
+    return _run(query, dbconn, lock=[table], read_only=test)
 
 
 def unlock(dbconn, table, id_or_ids, auto_add=True, test=False):
@@ -698,7 +608,7 @@ def unlock(dbconn, table, id_or_ids, auto_add=True, test=False):
 
         return rowcount
 
-    return _run(query, dbconn, read_only=test, table_to_lock=table)
+    return _run(query, dbconn, lock=[table], read_only=test)
 
 
 ### Prioritization ###
@@ -769,7 +679,7 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True, test=False):
         _execute(cursor, sql, [lock_for, lock_for] + ids)
         return cursor.rowcount
 
-    return _run(query, dbconn, read_only=test, table_to_lock=table)
+    return _run(query, dbconn, lock=[table], read_only=test)
 
 
 ### Auditing ###
@@ -815,8 +725,7 @@ def check(dbconn, table, id_or_ids):
         return dict((id_, (since_updated, locked_for))
                     for id_, since_updated, locked_for in cursor.fetchall())
 
-    return _run(query, dbconn, level='READ COMMITTED', read_only=True,
-                table_to_lock=table)
+    return _run(query, dbconn, lock=[table], read_only=True, lock_mode='READ')
 
 
 def stats(dbconn, table, delay_thresholds=None):
@@ -959,8 +868,7 @@ def stats(dbconn, table, delay_thresholds=None):
 
         return r
 
-    return _run(query, dbconn, level='READ UNCOMMITTED', read_only=True,
-                retry=False)  # no locking, so no plausible need to retry
+    return _run(query, dbconn, lock=None, read_only=True)
 
 
 ### Object-Oriented version ###
