@@ -22,13 +22,21 @@ import time
 from multiprocessing import Process
 
 # these settings almost guarantee deadlocks
-DB_PARAMS = {'db': 'test'}
-TABLE = 'concurrency_test_loop_2'
+DB_PARAMS = {
+    'charset': 'utf8',
+    'db': 'yelp_doloop',
+    'host': 'devdb5',
+    'passwd': '',
+    'port': 3306,
+    'use_unicode': True,
+    'user': 'yelpdev',
+}
+TABLE = 'concurrency_test_loop'
 NUM_IDS = 10000
-NUM_WORKERS = 100
-BATCH_SIZE = 10
-IDS_PER_WORKER = 500
-SLEEP_TIME = 0.0#1.0
+NUM_WORKERS = 20
+BATCH_SIZE = 500
+IDS_PER_WORKER = 50000
+SLEEP_TIME = 10.0
 
 
 def do_work():
@@ -39,7 +47,8 @@ def do_work():
     while ids_processed < IDS_PER_WORKER:
         ids = loop.get(BATCH_SIZE, min_loop_time=0)
 
-        time.sleep(SLEEP_TIME)
+        if SLEEP_TIME:
+            time.sleep(random.expovariate(1.0 / SLEEP_TIME))
 
         loop.did(ids)
 
@@ -54,10 +63,14 @@ def do_work():
 
 def main():
     dbconn = MySQLdb.connect(**DB_PARAMS)
-    sys.stderr.write('creating table\n')
 
-    dbconn.cursor().execute('DROP TABLE IF EXISTS `%s`' % TABLE)
-    doloop.create(dbconn, TABLE)
+    #sys.stderr.write('creating table\n')
+    #dbconn.cursor().execute('DROP TABLE IF EXISTS `%s`' % TABLE)
+    #doloop.create(dbconn, TABLE)
+
+    sys.stderr.write('deleting all rows from %s\n' % TABLE)
+    dbconn.cursor().execute('DELETE FROM `%s`' % TABLE)
+    dbconn.commit()
 
     loop = doloop.DoLoop(dbconn, TABLE)
 
