@@ -73,7 +73,7 @@ def find_script(script_name):
         subdir = os.path.join(top_dir, subdir_name)
         if not os.path.isdir(subdir):
             continue
-        
+
         maybe_script = os.path.join(subdir, script_name)
         if os.path.exists(maybe_script):
             return maybe_script
@@ -307,7 +307,7 @@ class DoLoopTestCase(unittest.TestCase):
         # make sure it works at all
         myisam_loop.add([1, 2, 3])
         self.assertEqual(myisam_loop.get(3), [1, 2, 3])
-        
+
     def test_create_table_must_be_a_string(self):
         self.assertRaises(TypeError,
                       doloop.create, 'foo_loop', self.make_dbconn())
@@ -325,7 +325,7 @@ class DoLoopTestCase(unittest.TestCase):
         script = find_script('create-doloop-table')
         proc = Popen([script, 'foo_loop'], stderr=PIPE, stdout=PIPE)
         stdout, stderr = proc.communicate()
-        
+
         self.assertIn('`foo_loop`', stdout)
         self.assertIn('INT', stdout)
         self.assertIn('InnoDB', stdout)
@@ -340,7 +340,7 @@ class DoLoopTestCase(unittest.TestCase):
         proc = Popen(
             [script, 'foo_loop', 'bar_loop'], stderr=PIPE, stdout=PIPE)
         stdout, stderr = proc.communicate()
-        
+
         self.assertIn('`foo_loop`', stdout)
         self.assertIn('`bar_loop`', stdout)
         self.assertIn('INT', stdout)
@@ -372,14 +372,14 @@ class DoLoopTestCase(unittest.TestCase):
             proc = Popen([script, 'foo_loop', opt, 'BIT(8)'],
                          stderr=PIPE, stdout=PIPE)
             stdout, stderr = proc.communicate()
-            
+
             self.assertIn('`foo_loop`', stdout)
             self.assertIn('BIT(8)', stdout)
             self.assertIn('InnoDB', stdout)
             self.assertEqual(
                 stdout,
                 doloop.sql_for_create('foo_loop', id_type='BIT(8)') + ';\n\n')
-    
+
             self.assertEqual(proc.returncode, 0)
             self.assertEqual(stderr, '')
 
@@ -389,14 +389,14 @@ class DoLoopTestCase(unittest.TestCase):
             proc = Popen([script, 'foo_loop', opt, 'MyISAM'],
                          stderr=PIPE, stdout=PIPE)
             stdout, stderr = proc.communicate()
-            
+
             self.assertIn('`foo_loop`', stdout)
             self.assertIn('INT', stdout)
             self.assertIn('MyISAM', stdout)
             self.assertEqual(
                 stdout,
                 doloop.sql_for_create('foo_loop', engine='MyISAM') + ';\n\n')
-    
+
             self.assertEqual(proc.returncode, 0)
             self.assertEqual(stderr, '')
 

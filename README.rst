@@ -1,5 +1,5 @@
 **doloop** is a simple but well-thought-out system for keeping things 
-with unique IDs updated. It supports concurrency and prioritization.
+with unique IDs updated. It is concurrency-safe and supports prioritization.
 
 **doloop**'s only dependency is 
 `MySQL <http://dev.mysql.com>`_; it does not require you to

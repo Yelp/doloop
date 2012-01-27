@@ -6,14 +6,14 @@ create-doloop-table
 
 .. please keep this in sync with bin/create-doloop-table's docstring
 
-:command:`create-doloop-table` prints out ``CREATE TABLE`` statements for 
+:command:`create-doloop-table` prints out ``CREATE TABLE`` statements for
 one or more doloop tables (which track how recently IDs were updated).
 
 Sample usage:
 
 .. code-block:: sh
 
-    create-doloop-table user_loop | mysql -D test # or a db of your choice
+    create-doloop-table user_loop | mysql -D test  # or a db of your choice
 
 which would pipe into :command:`mysql` something like this:
 
@@ -28,8 +28,10 @@ which would pipe into :command:`mysql` something like this:
     ) ENGINE=InnoDB
 
 You can set the type of the ``id`` column to something other than ``INT``
-with the ``-i`` option; e.g.:
+with the ``-i`` option, and the storage engine to something other than
+``InnoDB`` with the ``-e`` option. For example:
 
 .. code-block:: sh
 
-    create-doloop-table -i 'CHAR(64) CHARSET ascii' user_loop | mysql -D test
+    create-doloop-table -i 'CHAR(64) CHARSET ascii' -e MyISAM user_loop |\
+ mysql -D test

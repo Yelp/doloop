@@ -184,6 +184,7 @@ def _run(query, dbconn, lock=None, lock_mode='WRITE', read_only=False):
 
     If there is already a transaction in progress (i.e. you're using
     *dbconn* for non-:py:mod:`doloop` things), it'll be rolled back.
+    Also, *autocommit* will be set to ``0``
     """
     dbconn.rollback()
 
@@ -250,8 +251,8 @@ def create(dbconn, table, id_type=DEFAULT_ID_TYPE,
     :param str table: name of your task loop table. Something ending in
                       ``_loop`` is recommended.
     :param str id_type: alternate type for the ``id`` field (e.g.
-                        ``'VARCHAR(64)``')
-    :param str engine: alternate storage engine to use (e.g.``'MyISAM'``)
+                        ``'VARCHAR(64)'``)
+    :param str engine: alternate storage engine to use (e.g. ``'MyISAM'``)
 
     There is no ``drop()`` function because programmatically dropping tables
     is risky. The relevant SQL is just ``DROP TABLE `...```.
@@ -429,10 +430,6 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
 
         UPDATE `...` SET `lock_until` = UNIX_TIMESTAMP() + ...
             WHERE `id` IN (...)
-
-    If the first query returns no rows, we roll back before continuing to
-    avoid holding on to a gap lock (we only need to lock actual rows).
-    Otherwise, all three queries are run in a single transaction.
     """
     # do type-checking up front, to avoid cryptic MySQL errors
 
