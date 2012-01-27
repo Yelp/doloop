@@ -28,7 +28,11 @@ except ImportError:
 
 
 import doloop
-from doloop import ONE_HOUR, ONE_DAY, ONE_WEEK
+from doloop import DEFAULT_ID_TYPE
+from doloop import DEFAULT_STORAGE_ENGINE
+from doloop import ONE_DAY
+from doloop import ONE_HOUR
+from doloop import ONE_WEEK
 
 # support arbitrary MySQL drivers
 PYTHON_MYSQL_MODULE = os.environ.get('PYTHON_MYSQL_MODULE') or 'MySQLdb'
@@ -190,18 +194,21 @@ class DoLoopTestCase(unittest.TestCase):
     def make_dbconn(self):
         return self._connect(unix_socket=self.mysql_socket, db='doloop')
 
-    def create_doloop(self, table='loop', id_type='INT'):
+    def create_doloop(self, table='loop', id_type=DEFAULT_ID_TYPE,
+                      engine=DEFAULT_STORAGE_ENGINE):
         """Create a loop table in the `doloop` database, and return
         an object wrapping it. By default, this table will be named `loop`"""
         dbconn = self.make_dbconn()
-        doloop.create(dbconn, table, id_type)
+        doloop.create(dbconn, table, id_type=id_type, engine=engine)
         return doloop.DoLoop(dbconn, table)
 
-    def create_doloop_and_wrapped_dbconn(self, table='loop', id_type='INT'):
+    def create_doloop_and_wrapped_dbconn(self, table='loop',
+                                         id_type=DEFAULT_ID_TYPE,
+                                         engine=DEFAULT_STORAGE_ENGINE):
         """Create a loop table in the `doloop` database, and return
         an object wrapping it. By default, this table will be named `loop`"""
         dbconn = ExceptionRaisingDbConnWrapper(self.make_dbconn())
-        doloop.create(dbconn, table, id_type)
+        doloop.create(dbconn, table, id_type=id_type, engine=engine)
         return doloop.DoLoop(dbconn, table), dbconn
 
     ### tests for database wrapper ###
@@ -260,6 +267,19 @@ class DoLoopTestCase(unittest.TestCase):
         self.assertIn('Bbb'.lower(), id_lower_to_status)
         self.assertIn('BBB'.lower(), id_lower_to_status)
 
+    def test_create_myisam_storage_engine(self):
+        myisam_loop = self.create_doloop('myisam_loop', engine='MyISAM')
+
+        # verify that engine arg was actually passed through
+        cursor = self.make_dbconn().cursor()
+        cursor.execute('SHOW CREATE TABLE `myisam_loop`')
+        _, create_table = cursor.fetchall()[0]
+        self.assertIn('ENGINE=MyISAM', create_table)
+
+        # make sure it works at all
+        myisam_loop.add([1, 2, 3])
+        self.assertEqual(myisam_loop.get(3), [1, 2, 3])
+        
     def test_create_table_must_be_a_string(self):
         self.assertRaises(TypeError,
                       doloop.create, 'foo_loop', self.make_dbconn())

@@ -54,6 +54,12 @@ ONE_DAY = 60 * 60 * 24
 #: One week, in seconds
 ONE_WEEK = 60 * 60 * 24 * 7
 
+#: Default ID type for doloop tables
+DEFAULT_ID_TYPE = 'int'
+
+#: Default storage engine for doloop tables
+DEFAULT_STORAGE_ENGINE = 'InnoDB'
+
 
 ### MySQL module compabitibility ###
 
@@ -217,7 +223,8 @@ def _check_table_is_a_string(table):
 
 ### Creating a task loop ###
 
-def create(dbconn, table, id_type='INT'):
+def create(dbconn, table, id_type=DEFAULT_ID_TYPE,
+           engine=DEFAULT_STORAGE_ENGINE):
     """Create a task loop table. It has a schema like this:
 
     .. code-block:: sql
@@ -244,15 +251,17 @@ def create(dbconn, table, id_type='INT'):
                       ``_loop`` is recommended.
     :param str id_type: alternate type for the ``id`` field (e.g.
                         ``'VARCHAR(64)``')
+    :param str engine: alternate storage engine to use (e.g.``'MyISAM'``)
 
     There is no ``drop()`` function because programmatically dropping tables
     is risky. The relevant SQL is just ``DROP TABLE `...```.
     """
-    sql = sql_for_create(table, id_type=id_type)
+    sql = sql_for_create(table, id_type=id_type, engine=engine)
     dbconn.cursor().execute(sql)
 
 
-def sql_for_create(table, id_type='INT'):
+def sql_for_create(table, id_type=DEFAULT_ID_TYPE,
+                   engine=DEFAULT_STORAGE_ENGINE):
     """Get SQL used by :py:func:`create`.
 
     Useful to power :command:`create-doloop-table` (included with this
@@ -267,7 +276,7 @@ def sql_for_create(table, id_type='INT'):
     `lock_until` INT default NULL,
     PRIMARY KEY (`id`),
     KEY `lock_until` (`lock_until`, `last_updated`)
-) ENGINE=InnoDB""" % (table, id_type)
+) ENGINE=%s""" % (table, id_type, engine)
 
 
 ### Adding and removing IDs ###
@@ -890,7 +899,7 @@ class DoLoop(object):
                        any caching/pooling/etc. inside your callable.
         :param string table: name of your task loop table
 
-        You can read (but not change) the table name by calling ``self.table``
+        You can read (but not change) the table name from ``self.table``
         """
         if hasattr(dbconn, '__call__'):
             self._make_dbconn = dbconn
