@@ -127,6 +127,9 @@ def _execute(cursor, qmark_query, params):
     not correctly handle question marks in string literals or double question
     marks.
     """
+    # make sure we haven't lapsed into a different paramstyle
+    assert '%s' not in qmark_query
+
     paramstyle = _paramstyle(cursor)
     format_query = qmark_query.replace('?', '%s')
 
