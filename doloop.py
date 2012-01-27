@@ -163,13 +163,13 @@ def _to_list(x):
 
 
 def _run(query, dbconn, lock=None, lock_mode='WRITE', read_only=False):
-    """Run a query, optionally locking one or more tables. If an exception
+    """Run a query, optionally locking a tables. If an exception
     is thrown, we unlock the tables and roll back the transaction
     before re-raising the exception.
 
     :param dbconn: any DBI-compliant MySQL connection object
     :param query: a function which takes a db cursor as its only argument
-    :param lock: a list of tables to lock. If this is empty or ``None``,
+    :param lock: Name of a table to lock. If this is empty or ``None``,
                  we run the query in ``READ UNCOMMITTED`` mode instead.
     :param string lock_mode: either ``'READ'`` or ``'WRITE'`` (this is
                              separate from from *read_only* because
@@ -186,9 +186,7 @@ def _run(query, dbconn, lock=None, lock_mode='WRITE', read_only=False):
     try:
         if lock:
             cursor.execute('SET autocommit = 0')
-            cursor.execute(
-                'LOCK TABLES ' + ', '.join(
-                    '`%s` %s' % (table, lock_mode) for table in lock))
+            cursor.execute('LOCK TABLES `%s` %s' % (lock, lock_mode))
         else:
             cursor.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
             cursor.execute('START TRANSACTION')
@@ -306,7 +304,7 @@ def add(dbconn, table, id_or_ids, updated=False, test=False):
     def query(cursor):
         return _add(cursor, table, ids, updated=updated)
 
-    return _run(query, dbconn, lock=[table], read_only=test)
+    return _run(query, dbconn, lock=table, read_only=test)
 
 
 def _add(cursor, table, ids, updated=False):
@@ -367,7 +365,7 @@ def remove(dbconn, table, id_or_ids, test=False):
         _execute(cursor, sql, ids)
         return cursor.rowcount
 
-    return _run(query, dbconn, lock=[table], read_only=test)
+    return _run(query, dbconn, lock=table, read_only=test)
 
 
 ### Getting and updating IDs ###
@@ -493,7 +491,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
 
         return ids
 
-    return _run(query, dbconn, lock=[table], read_only=test)
+    return _run(query, dbconn, lock=table, read_only=test)
 
 
 def did(dbconn, table, id_or_ids, auto_add=True, test=False):
@@ -543,7 +541,7 @@ def did(dbconn, table, id_or_ids, auto_add=True, test=False):
         _execute(cursor, sql, ids)
         return cursor.rowcount
 
-    return _run(query, dbconn, lock=[table], read_only=test)
+    return _run(query, dbconn, lock=table, read_only=test)
 
 
 def unlock(dbconn, table, id_or_ids, auto_add=True, test=False):
@@ -608,7 +606,7 @@ def unlock(dbconn, table, id_or_ids, auto_add=True, test=False):
 
         return rowcount
 
-    return _run(query, dbconn, lock=[table], read_only=test)
+    return _run(query, dbconn, lock=table, read_only=test)
 
 
 ### Prioritization ###
@@ -679,7 +677,7 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True, test=False):
         _execute(cursor, sql, [lock_for, lock_for] + ids)
         return cursor.rowcount
 
-    return _run(query, dbconn, lock=[table], read_only=test)
+    return _run(query, dbconn, lock=table, read_only=test)
 
 
 ### Auditing ###
@@ -725,7 +723,7 @@ def check(dbconn, table, id_or_ids):
         return dict((id_, (since_updated, locked_for))
                     for id_, since_updated, locked_for in cursor.fetchall())
 
-    return _run(query, dbconn, lock=[table], read_only=True, lock_mode='READ')
+    return _run(query, dbconn, lock=table, read_only=True, lock_mode='READ')
 
 
 def stats(dbconn, table, delay_thresholds=None):
