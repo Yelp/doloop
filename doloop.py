@@ -285,8 +285,7 @@ def add(dbconn, table, id_or_ids, updated=False, test=False):
 
     :return: number of IDs that are new
 
-    Runs this query in ``REPEATABLE READ`` mode, retrying on deadlock or lock
-    wait timeout:
+    Runs this query with a write lock on *table*:
 
     .. code-block:: sql
 
@@ -344,8 +343,7 @@ def remove(dbconn, table, id_or_ids, test=False):
 
     :return: number of IDs removed
 
-    Runs this query in ``REPEATABLE READ`` mode, retrying on deadlock or lock
-    wait timeout:
+    Runs this query with a write lock on *table*:
 
     .. code-block:: sql
 
@@ -404,8 +402,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
 
     :return: list of IDs
 
-    Runs this query in ``REPEATABLE READ`` mode, retrying on deadlock or lock
-    wait timeout:
+    Runs this query with a write lock on *table*:
 
     .. code-block:: sql
 
@@ -509,8 +506,7 @@ def did(dbconn, table, id_or_ids, auto_add=True, test=False):
 
     :return: number of rows updated (mostly useful as a sanity check)
 
-    Runs this query in ``REPEATABLE READ`` mode, retrying on deadlock or lock
-    wait timeout:
+    Runs this query with a write lock on *table*:
 
     .. code-block:: sql
 
@@ -562,8 +558,7 @@ def unlock(dbconn, table, id_or_ids, auto_add=True, test=False):
              are configured.) Don't use this for anything more critical than
              sanity checks and logging.
 
-    Runs this query in ``REPEATABLE READ`` mode, retrying on deadlock or lock
-    wait timeout:
+    Runs this query with a write lock on *table*:
 
     .. code-block:: sql
 
@@ -639,8 +634,7 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True, test=False):
 
     :return: number of IDs bumped (mostly useful as a sanity check)
 
-    Runs this query in ``REPEATABLE READ`` mode, retrying on deadlock or lock
-    wait timeout:
+    Runs this query with a write lock on *table*:
 
     .. code-block:: sql
 
@@ -695,8 +689,7 @@ def check(dbconn, table, id_or_ids):
 
     This function does not require write access to your database.
 
-    Runs this query in ``REPEATABLE READ`` mode, retrying on deadlock or lock
-    wait timeout:
+    Runs this query with a read lock on *table*:
 
     .. code-block:: sql
 
