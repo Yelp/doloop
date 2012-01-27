@@ -54,8 +54,7 @@ def main(args):
     options, tables = parser.parse_args()
 
     if not tables:
-        parser.print_help()
-        sys.exit(0)
+        parser.error('You must specify at least one table name')
 
     for table in tables:
         print doloop.sql_for_create(table,
