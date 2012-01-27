@@ -9,8 +9,8 @@ doloop - a task loop for keeping things updated
 What is doloop?
 ---------------
 
-:py:mod:`doloop` is a simple but well-thought-out system for keeping things
-with unique IDs updated. It is concurrency-safe and supports prioritization.
+:py:mod:`doloop` is a simple system for keeping things with unique IDs updated.
+It is concurrency-safe and supports prioritization.
 
 :py:mod:`doloop`'s only dependency is
 `MySQL <http://dev.mysql.com>`_; it does not require you to
