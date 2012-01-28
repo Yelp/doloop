@@ -11,7 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from StringIO import StringIO
 import logging
+import optparse
 import os
 import re
 import shutil
@@ -34,6 +36,7 @@ from doloop import DEFAULT_STORAGE_ENGINE
 from doloop import ONE_DAY
 from doloop import ONE_HOUR
 from doloop import ONE_WEEK
+from doloop import _main_for_create_doloop_table
 
 # support arbitrary MySQL drivers
 PYTHON_MYSQL_MODULE = os.environ.get('PYTHON_MYSQL_MODULE') or 'MySQLdb'
@@ -52,33 +55,6 @@ MAX_MYSQLD_STARTUP_TIME = 15
 # to mind
 LOCK_WAIT_TIMEOUT_EXC = mysql_module.OperationalError(
     'Lock wait timeout exceeded; try restarting transaction', 1205)
-
-
-def find_script(script_name):
-    """Try to find the version of the script with the given name in
-    our source code (rather than the installed one). If we can't; just return
-    *script_name* unchanged.
-
-    We basically start at the directory containing doloop.py, and look for
-    ``*/script_name``. This works when running tests in the current directory
-    or when running ``python setup.py test``.
-
-    This is only used to locate :command:`create-doloop-table`; it would
-    probably need more tuning to work with scripts with less distinctive
-    names.
-    """
-    top_dir = os.path.abspath(os.path.dirname(doloop.__file__))
-
-    for subdir_name in os.listdir(top_dir):
-        subdir = os.path.join(top_dir, subdir_name)
-        if not os.path.isdir(subdir):
-            continue
-
-        maybe_script = os.path.join(subdir, script_name)
-        if os.path.exists(maybe_script):
-            return maybe_script
-
-    return name  # trust $PATH
 
 
 class ExceptionRaisingDbConnWrapper(object):
@@ -318,87 +294,6 @@ class DoLoopTestCase(unittest.TestCase):
         dbconn.raise_exception_later(LOCK_WAIT_TIMEOUT_EXC, num_queries=1)
         self.assertRaises(mysql_module.OperationalError,
                       doloop.create, dbconn, 'foo_loop')
-
-    ### tests for create-doloop-table script ###
-
-    def test_create_script_one_table(self):
-        script = find_script('create-doloop-table')
-        proc = Popen([script, 'foo_loop'], stderr=PIPE, stdout=PIPE)
-        stdout, stderr = proc.communicate()
-
-        self.assertIn('`foo_loop`', stdout)
-        self.assertIn('INT', stdout)
-        self.assertIn('InnoDB', stdout)
-        self.assertEqual(stdout,
-                         doloop.sql_for_create('foo_loop') + ';\n\n')
-
-        self.assertEqual(proc.returncode, 0)
-        self.assertEqual(stderr, '')
-
-    def test_create_script_multiple_tables(self):
-        script = find_script('create-doloop-table')
-        proc = Popen(
-            [script, 'foo_loop', 'bar_loop'], stderr=PIPE, stdout=PIPE)
-        stdout, stderr = proc.communicate()
-
-        self.assertIn('`foo_loop`', stdout)
-        self.assertIn('`bar_loop`', stdout)
-        self.assertIn('INT', stdout)
-        self.assertIn('InnoDB', stdout)
-        self.assertEqual(stdout,
-                         doloop.sql_for_create('foo_loop') + ';\n\n' +
-                         doloop.sql_for_create('bar_loop') + ';\n\n')
-
-        self.assertEqual(proc.returncode, 0)
-        self.assertEqual(stderr, '')
-
-    def test_create_script_error_and_usage_if_no_tables(self):
-        script = find_script('create-doloop-table')
-        proc = Popen([script], stderr=PIPE, stdout=PIPE)
-        stdout, stderr = proc.communicate()
-
-        # should print help on stderr
-        self.assertEqual(proc.returncode, 2)
-        self.assertIn('You must specify', stderr)
-        self.assertIn('Usage', stderr)
-        self.assertIn('create-doloop-table', stderr)
-        # prints usage but not switches
-        self.assertNotIn('--engine', stderr)
-        self.assertEqual(stdout, '')
-
-    def test_create_script_id_type(self):
-        script = find_script('create-doloop-table')
-        for opt in ('-i', '--id-type'):
-            proc = Popen([script, 'foo_loop', opt, 'BIT(8)'],
-                         stderr=PIPE, stdout=PIPE)
-            stdout, stderr = proc.communicate()
-
-            self.assertIn('`foo_loop`', stdout)
-            self.assertIn('BIT(8)', stdout)
-            self.assertIn('InnoDB', stdout)
-            self.assertEqual(
-                stdout,
-                doloop.sql_for_create('foo_loop', id_type='BIT(8)') + ';\n\n')
-
-            self.assertEqual(proc.returncode, 0)
-            self.assertEqual(stderr, '')
-
-    def test_create_script_engine(self):
-        script = find_script('create-doloop-table')
-        for opt in ('-e', '--engine'):
-            proc = Popen([script, 'foo_loop', opt, 'MyISAM'],
-                         stderr=PIPE, stdout=PIPE)
-            stdout, stderr = proc.communicate()
-
-            self.assertIn('`foo_loop`', stdout)
-            self.assertIn('INT', stdout)
-            self.assertIn('MyISAM', stdout)
-            self.assertEqual(
-                stdout,
-                doloop.sql_for_create('foo_loop', engine='MyISAM') + ';\n\n')
-
-            self.assertEqual(proc.returncode, 0)
-            self.assertEqual(stderr, '')
 
     ### tests for add() ###
 
@@ -1016,6 +911,75 @@ class DoLoopTestCase(unittest.TestCase):
         # whoops, table and connection name are reversed
         self.assertRaises(TypeError,
                           doloop.DoLoop, 'foo_loop', self.make_dbconn())
+
+
+class CreateDoloopTableScriptTestCase(unittest.TestCase):
+
+    def setUp(self):
+        self._real_stdout = sys.stdout
+        sys.stdout = StringIO()
+
+        def error(self, msg):
+            raise ValueError(msg)
+
+        self._real_OptionParser_error = optparse.OptionParser.error
+        optparse.OptionParser.error = error
+
+    def tearDown(self):
+        sys.stdout = self._real_stdout
+        optparse.OptionParser.error = self._real_OptionParser_error
+
+    def test_create_script_one_table(self):
+        _main_for_create_doloop_table(['foo_loop'])
+        output = sys.stdout.getvalue()
+        
+        self.assertIn('`foo_loop`', output)
+        self.assertIn('INT', output)
+        self.assertIn('InnoDB', output)
+        self.assertEqual(output,
+                         doloop.sql_for_create('foo_loop') + ';\n\n')
+
+    def test_create_script_multiple_tables(self):
+        _main_for_create_doloop_table(['foo_loop', 'bar_loop'])
+        output = sys.stdout.getvalue()
+
+        self.assertIn('`foo_loop`', output)
+        self.assertIn('`bar_loop`', output)
+        self.assertIn('INT', output)
+        self.assertIn('InnoDB', output)
+        self.assertEqual(output,
+                         doloop.sql_for_create('foo_loop') + ';\n\n' +
+                         doloop.sql_for_create('bar_loop') + ';\n\n')
+
+    def test_create_script_error_if_no_tables(self):
+        self.assertRaises(ValueError,
+                          _main_for_create_doloop_table, [])
+
+    def test_create_script_id_type(self):
+        for opt in ('-i', '--id-type'):
+            sys.stdout = StringIO()  # use a fresh buffer
+            _main_for_create_doloop_table(['foo_loop', opt, 'BIT(8)'])
+            output = sys.stdout.getvalue()
+
+            self.assertIn('`foo_loop`', output)
+            self.assertIn('BIT(8)', output)
+            self.assertIn('InnoDB', output)
+            self.assertEqual(
+                output,
+                doloop.sql_for_create('foo_loop', id_type='BIT(8)') + ';\n\n')
+
+    def test_create_script_engine(self):
+        for opt in ('-e', '--engine'):
+            sys.stdout = StringIO()  # use a fresh buffer
+            _main_for_create_doloop_table(['foo_loop', opt, 'MyISAM'])
+            output = sys.stdout.getvalue()
+
+            self.assertIn('`foo_loop`', output)
+            self.assertIn('INT', output)
+            self.assertIn('MyISAM', output)
+            self.assertEqual(
+                output,
+                doloop.sql_for_create('foo_loop', engine='MyISAM') + ';\n\n')
 
 
 if __name__ == '__main__':

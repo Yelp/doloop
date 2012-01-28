@@ -4,8 +4,6 @@ Scripts
 create-doloop-table
 -------------------
 
-.. please keep this in sync with bin/create-doloop-table's docstring
-
 :command:`create-doloop-table` prints out ``CREATE TABLE`` statements for
 one or more doloop tables (which track how recently IDs were updated).
 

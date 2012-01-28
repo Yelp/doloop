@@ -43,6 +43,7 @@ __version__ = '0.3.0-dev'
 
 import decimal
 import inspect
+import optparse
 import sys
 
 #: One hour, in seconds
@@ -281,6 +282,35 @@ def sql_for_create(table, id_type=DEFAULT_ID_TYPE,
     PRIMARY KEY (`id`),
     KEY `lock_until` (`lock_until`, `last_updated`)
 ) ENGINE=%s""" % (table, id_type, engine)
+
+
+def _main_for_create_doloop_table(args):
+    """Driver for the create-doloop-table script. See docs/scripts.rst
+    for details.."""
+    usage = '%prog [options] table [table ...] | mysql -D dbname'
+    description = ('Print SQL to create one or more task loop tables.')
+    parser = optparse.OptionParser(usage=usage, description=description)
+
+    parser.add_option(
+        '-i', '--id-type', dest='id_type',
+        default=DEFAULT_ID_TYPE,
+        help='Type for the ID field (default: %default)')
+
+    parser.add_option(
+        '-e', '--engine', dest='engine',
+        default=DEFAULT_STORAGE_ENGINE,
+        help='Type for the ID field (default: %default)')
+
+    options, tables = parser.parse_args(args)
+
+    if not tables:
+        parser.error('You must specify at least one table name')
+
+    for table in tables:
+        print sql_for_create(table,
+                             id_type=options.id_type,
+                             engine=options.engine) + ';'
+        print
 
 
 ### Adding and removing IDs ###
