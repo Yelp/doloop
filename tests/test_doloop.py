@@ -932,7 +932,7 @@ class CreateDoloopTableScriptTestCase(unittest.TestCase):
     def test_create_script_one_table(self):
         _main_for_create_doloop_table(['foo_loop'])
         output = sys.stdout.getvalue()
-        
+
         self.assertIn('`foo_loop`', output)
         self.assertIn('INT', output)
         self.assertIn('InnoDB', output)

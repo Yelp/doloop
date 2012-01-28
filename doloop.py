@@ -39,7 +39,7 @@ __credits__ = [
     'Jennifer Snyder <jsnyder@yelp.com>',
 ]
 
-__version__ = '0.3.0-dev'
+__version__ = '0.3.0'
 
 import decimal
 import inspect
@@ -286,7 +286,7 @@ def sql_for_create(table, id_type=DEFAULT_ID_TYPE,
 
 def _main_for_create_doloop_table(args):
     """Driver for the create-doloop-table script. See docs/scripts.rst
-    for details.."""
+    for details."""
     usage = '%prog [options] table [table ...] | mysql -D dbname'
     description = ('Print SQL to create one or more task loop tables.')
     parser = optparse.OptionParser(usage=usage, description=description)

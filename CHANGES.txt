@@ -1,7 +1,12 @@
-v0.2.1, 2010-11-02 -- stats() bugfix
+v0.3.0, 2012-01-31 -- Just lock the tables
+ * explicitly lock loop tables rather than trusting MySQL
+ * no retry on deadlocks or lock wait timeouts (no longer needed)
+ * allow storage engines other than InnoDB
+
+v0.2.1, 2011-11-02 -- stats() bugfix
  * min_update_time and max_update_time are no longer reversed (Issue #12)
 
-v0.2.0, 2010-10-19 -- Learning from experience
+v0.2.0, 2011-10-19 -- Learning from experience
  * Updates to stats()
    * Cleaner output (Issue #4)
    * We now collect update-time stats for locked/bumped IDs (Issue #5)
@@ -13,4 +18,4 @@ v0.2.0, 2010-10-19 -- Learning from experience
  * read-only mode for testing/dry runs (Issue #9)
  * breaking ties in get() (e.g. for new IDs) is now left to the database
 
-v0.1.0, 2010-08-15 -- Initial release
+v0.1.0, 2011-08-15 -- Initial release
