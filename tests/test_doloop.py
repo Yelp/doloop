@@ -276,9 +276,12 @@ class DoLoopTestCase(unittest.TestCase):
 
         # verify that engine arg was actually passed through
         cursor = self.make_dbconn().cursor()
-        cursor.execute('SHOW CREATE TABLE `myisam_loop`')
-        _, create_table = cursor.fetchall()[0]
-        self.assertIn('ENGINE=MyISAM', create_table)
+        # oursql 0.9.2 appears not to support SHOW CREATE TABLE,
+        # so use INFORMATION_SCHEMA instead.
+        cursor.execute(
+            "SELECT `ENGINE` FROM `INFORMATION_SCHEMA`.`TABLES` WHERE"
+            " `TABLE_SCHEMA` = 'doloop' AND `TABLE_NAME` = 'myisam_loop'")
+        self.assertEqual(cursor.fetchall()[0][0], 'MyISAM')
 
         # make sure it works at all
         myisam_loop.add([1, 2, 3])
