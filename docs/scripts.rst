@@ -31,5 +31,4 @@ with the ``-i`` option, and the storage engine to something other than
 
 .. code-block:: sh
 
-    create-doloop-table -i 'CHAR(64) CHARSET ascii' -e MyISAM user_loop |\
- mysql -D test
+    create-doloop-table -i 'CHAR(64) CHARSET ascii' -e MyISAM user_loop | mysql -D test
