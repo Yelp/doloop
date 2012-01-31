@@ -755,7 +755,7 @@ class DoLoopTestCase(unittest.TestCase):
 
         loop.add([10, 11, 12, 13, 14])
 
-        dbconn.raise_exception_later(LOCK_WAIT_TIMEOUT_EXC, num_queries=3)
+        dbconn.raise_exception_later(LOCK_WAIT_TIMEOUT_EXC, num_queries=2)
         self.assertRaises(mysql_module.OperationalError, loop.check, 10)
 
         self.assertEqual(loop.check(10), {10: (None, None)})

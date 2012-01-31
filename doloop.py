@@ -172,23 +172,25 @@ def _to_list(x):
         return [x]
 
 
-def _run(query, dbconn, lock=None, lock_mode='WRITE', read_only=False):
+def _run(query, dbconn, lock=None, level=None, read_only=False):
     """Run a query, optionally locking a tables. If an exception
     is thrown, we unlock the tables and roll back the transaction
     before re-raising the exception.
 
     :param dbconn: any DBI-compliant MySQL connection object
     :param query: a function which takes a db cursor as its only argument
-    :param lock: Name of a table to lock. If this is empty or ``None``,
-                 we run the query in ``READ UNCOMMITTED`` mode instead.
-    :param string lock_mode: either ``'READ'`` or ``'WRITE'`` (this is
-                             separate from from *read_only* because
-                             *read_only* is mostly used for testing)
+    :param lock: if set, we'll set ``autocommit`` to 0, and lock that table in
+                 ``WRITE`` mode before running the query. If not set,
+                 we'll run the query in a transaction instead.
+    :param str level: transaction isolation level to use. Mutually exclusive
+                      with *lock*.
     :param bool read_only: if true, roll back after running the query
+                           (otherwise we commit)
 
-    If there is already a transaction in progress (i.e. you're using
-    *dbconn* for non-:py:mod:`doloop` things), it'll be rolled back.
-    Also, *autocommit* will be set to ``0``
+    If there is already a transaction in progress on *dbconn*, we'll roll
+    it back, and (if *lock* is set) unlock any tables currently locked. If
+    something goes wrong during the query, we'll roll back and unlock any
+    tables we locked.
     """
     dbconn.rollback()
 
@@ -196,13 +198,17 @@ def _run(query, dbconn, lock=None, lock_mode='WRITE', read_only=False):
 
     try:
         if lock:
+            assert not level
+            cursor.execute('UNLOCK TABLES')
+
             cursor.execute('SET autocommit = 0')
-            cursor.execute('LOCK TABLES `%s` %s' % (lock, lock_mode))
+            cursor.execute('LOCK TABLES `%s` WRITE' % lock)
         else:
-            cursor.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
+            if level:
+                cursor.execute('SET TRANSACTION ISOLATION LEVEL ' + level)
             cursor.execute('START TRANSACTION')
 
-        result = query(dbconn.cursor())
+        result = query(cursor)
 
         if read_only:
             dbconn.rollback()
@@ -210,13 +216,16 @@ def _run(query, dbconn, lock=None, lock_mode='WRITE', read_only=False):
             dbconn.commit()
 
         if lock:
-            dbconn.cursor().execute('UNLOCK TABLES')
+            cursor.execute('UNLOCK TABLES')
 
         return result
+
     except:
-        if lock:
-            dbconn.cursor().execute('UNLOCK TABLES')
         dbconn.rollback()
+
+        if lock:
+            cursor.execute('UNLOCK TABLES')
+
         raise
 
 
@@ -726,9 +735,9 @@ def check(dbconn, table, id_or_ids):
     locked_for)``, that is, the current time minus ``last_updated``, and
     ``lock_for`` minus the current time (both of these in seconds).
 
-    This function does not require write access to your database.
-
-    Runs this query with a read lock on *table*:
+    This function does not require write access to your database. It runs
+    the following query in a transaction (without setting transaction
+    isolation level):
 
     .. code-block:: sql
 
@@ -755,7 +764,7 @@ def check(dbconn, table, id_or_ids):
         return dict((id_, (since_updated, locked_for))
                     for id_, since_updated, locked_for in cursor.fetchall())
 
-    return _run(query, dbconn, lock=table, read_only=True, lock_mode='READ')
+    return _run(query, dbconn, read_only=True)
 
 
 def stats(dbconn, table, delay_thresholds=None):
@@ -898,7 +907,7 @@ def stats(dbconn, table, delay_thresholds=None):
 
         return r
 
-    return _run(query, dbconn, lock=None, read_only=True)
+    return _run(query, dbconn, level='READ UNCOMMITTED', read_only=True)
 
 
 ### Object-Oriented version ###
