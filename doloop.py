@@ -215,18 +215,15 @@ def _run(query, dbconn, lock=None, level=None, read_only=False):
         else:
             dbconn.commit()
 
-        if lock:
-            cursor.execute('UNLOCK TABLES')
-
         return result
 
     except:
         dbconn.rollback()
+        raise
 
+    finally:
         if lock:
             cursor.execute('UNLOCK TABLES')
-
-        raise
 
 
 def _check_table_is_a_string(table):
