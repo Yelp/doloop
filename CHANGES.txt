@@ -1,4 +1,4 @@
-v0.4.0, 2012-03-03 -- Make stats() cheaper
+v0.4.0, 2012-04-09 -- Make stats() cheaper
  * stats() does less, but avoids scanning all rows
 
 v0.3.0, 2012-01-31 -- Just lock the tables
