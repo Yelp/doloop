@@ -39,9 +39,8 @@ __credits__ = [
     'Jennifer Snyder <jsnyder@yelp.com>',
 ]
 
-__version__ = '0.3.0'
+__version__ = '0.4.0'
 
-import decimal
 import inspect
 import optparse
 import sys
@@ -172,45 +171,33 @@ def _to_list(x):
         return [x]
 
 
-def _run(query, dbconn, lock=None, level=None, read_only=False):
-    """Run a query, optionally locking a tables. If an exception
-    is thrown, we unlock the tables and roll back the transaction
+def _run(query, dbconn, table, lock_mode, roll_back):
+    """Run a query with a single table locked. If an exception
+    is thrown, we roll back the transaction and then unlock the table
     before re-raising the exception.
 
-    :param dbconn: any DBI-compliant MySQL connection object
     :param query: a function which takes a db cursor as its only argument
-    :param lock: if set, we'll set ``autocommit`` to 0, and lock that table in
-                 ``WRITE`` mode before running the query. If not set,
-                 we'll run the query in a transaction instead.
-    :param str level: transaction isolation level to use. Mutually exclusive
-                      with *lock*.
-    :param bool read_only: if true, roll back after running the query
-                           (otherwise we commit)
+    :param dbconn: any DBI-compliant MySQL connection object
+    :param table: table to lock while running the query
+    :param bool lock_mode: mode to lock *table* in (e.g. ``'WRITE'``)
+    :param bool roll_back: if true, always roll back after issuing the query
 
     If there is already a transaction in progress on *dbconn*, we'll roll
-    it back, and (if *lock* is set) unlock any tables currently locked. If
-    something goes wrong during the query, we'll roll back and unlock any
-    tables we locked.
+    it back, and unlock any tables currently locked.
     """
     dbconn.rollback()
 
     cursor = dbconn.cursor()
 
     try:
-        if lock:
-            assert not level
-            cursor.execute('UNLOCK TABLES')
+        cursor.execute('UNLOCK TABLES')
 
-            cursor.execute('SET autocommit = 0')
-            cursor.execute('LOCK TABLES `%s` WRITE' % lock)
-        else:
-            if level:
-                cursor.execute('SET TRANSACTION ISOLATION LEVEL ' + level)
-            cursor.execute('START TRANSACTION')
+        cursor.execute('SET autocommit = 0')
+        cursor.execute('LOCK TABLES `%s` %s' % (table, lock_mode))
 
         result = query(cursor)
 
-        if read_only:
+        if roll_back:
             dbconn.rollback()
         else:
             dbconn.commit()
@@ -222,8 +209,7 @@ def _run(query, dbconn, lock=None, level=None, read_only=False):
         raise
 
     finally:
-        if lock:
-            cursor.execute('UNLOCK TABLES')
+        cursor.execute('UNLOCK TABLES')
 
 
 def _check_table_is_a_string(table):
@@ -352,7 +338,7 @@ def add(dbconn, table, id_or_ids, updated=False, test=False):
     def query(cursor):
         return _add(cursor, table, ids, updated=updated)
 
-    return _run(query, dbconn, lock=table, read_only=test)
+    return _run(query, dbconn, table, lock_mode='WRITE', roll_back=test)
 
 
 def _add(cursor, table, ids, updated=False):
@@ -412,7 +398,7 @@ def remove(dbconn, table, id_or_ids, test=False):
         _execute(cursor, sql, ids)
         return cursor.rowcount
 
-    return _run(query, dbconn, lock=table, read_only=test)
+    return _run(query, dbconn, table, lock_mode='WRITE', roll_back=test)
 
 
 ### Getting and updating IDs ###
@@ -533,7 +519,7 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
 
         return ids
 
-    return _run(query, dbconn, lock=table, read_only=test)
+    return _run(query, dbconn, table, lock_mode='WRITE', roll_back=test)
 
 
 def did(dbconn, table, id_or_ids, auto_add=True, test=False):
@@ -582,7 +568,7 @@ def did(dbconn, table, id_or_ids, auto_add=True, test=False):
         _execute(cursor, sql, ids)
         return cursor.rowcount
 
-    return _run(query, dbconn, lock=table, read_only=test)
+    return _run(query, dbconn, table, lock_mode='WRITE', roll_back=test)
 
 
 def unlock(dbconn, table, id_or_ids, auto_add=True, test=False):
@@ -646,7 +632,7 @@ def unlock(dbconn, table, id_or_ids, auto_add=True, test=False):
 
         return rowcount
 
-    return _run(query, dbconn, lock=table, read_only=test)
+    return _run(query, dbconn, table, lock_mode='WRITE', roll_back=test)
 
 
 ### Prioritization ###
@@ -716,7 +702,7 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True, test=False):
         _execute(cursor, sql, [lock_for, lock_for] + ids)
         return cursor.rowcount
 
-    return _run(query, dbconn, lock=table, read_only=test)
+    return _run(query, dbconn, table, lock_mode='WRITE', roll_back=test)
 
 
 ### Auditing ###
@@ -732,9 +718,9 @@ def check(dbconn, table, id_or_ids):
     locked_for)``, that is, the current time minus ``last_updated``, and
     ``lock_for`` minus the current time (both of these in seconds).
 
-    This function does not require write access to your database. It runs
-    the following query in a transaction (without setting transaction
-    isolation level):
+    This function does not require write access to your database.
+
+    Runs this query with a read lock on *table*:
 
     .. code-block:: sql
 
@@ -761,10 +747,10 @@ def check(dbconn, table, id_or_ids):
         return dict((id_, (since_updated, locked_for))
                     for id_, since_updated, locked_for in cursor.fetchall())
 
-    return _run(query, dbconn, read_only=True)
+    return _run(query, dbconn, table, lock_mode='READ', roll_back=True)
 
 
-def stats(dbconn, table, delay_thresholds=None):
+def stats(dbconn, table):
     """Get stats on the performance of the task loop as a whole.
 
     :param dbconn: any DBI-compliant MySQL connection object
@@ -775,9 +761,6 @@ def stats(dbconn, table, delay_thresholds=None):
 
     * **bumped**: number of IDs where ``lock_until`` is now or in the past.
       (These IDs have the *highest* priority; see :py:func:`~doloop.get`.)
-    * **delayed**: map from time in seconds, specified in *delay_thresholds*,
-      to number of IDs last updated at least that long ago. If
-      *delay_thresholds* is not set, this is ``{}``.
     * **locked**: number of IDs where ``lock_until`` is in the future
     * **min_bump_time**/**max_bump_time**: min/max number of seconds that any
       ID has been prioritized (``lock_until`` now or in the past)
@@ -785,10 +768,7 @@ def stats(dbconn, table, delay_thresholds=None):
     * **min_lock_time**/**max_lock_time**: min/max number of seconds that any
       ID is locked for
     * **min_update_time**/**max_update_time**: min/max number of seconds that
-      an unlocked ID has gone since being updated
-    * **new**: number of IDs where ``last_updated`` is ``NULL``
-    * **total**: total number of IDs
-    * **updated**: number of IDs where ``last_updated`` is not ``NULL``
+      an ID has gone since being updated
 
     For convenience and readability, all times will be floating point numbers.
 
@@ -797,114 +777,100 @@ def stats(dbconn, table, delay_thresholds=None):
 
     This function does not require write access to your database.
 
-    Don't be surprised if you see minor discrepancies; this function runs
-    four separate queries in ``READ UNCOMMITTED`` mode:
+    :py:func:`stats` only scans locked/bumped rows and use indexes for
+    everything else, so it should be very fast except in pathological cases.
+    It runs these queries with a read lock on *table*:
 
     .. code-block:: sql
 
-        SELECT MIN(`id`), MAX(`id`) FROM `...`
+        SELECT MIN(`id`), MAX(`id`), UNIX_TIMESTAMP() FROM `...`
 
-        SELECT COUNT(*),
-               SUM(IF(`last_updated` IS NULL, 1, 0)),
-               UNIX_TIMESTAMP() - MAX(`last_updated`),
-               UNIX_TIMESTAMP() - MIN(`last_updated`),
-               SUM(IF(`last_updated` <= UNIX_TIMESTAMP() - ..., 1, 0)),
-               SUM(IF(`last_updated` <= UNIX_TIMESTAMP() - ..., 1, 0)),
-               ...
+        SELECT MIN(`last_updated`),
+               MAX(`last_updated`),
                FROM `...`
+               WHERE `lock_until` IS NULL;
 
         SELECT COUNT(*),
-               MIN(`lock_until`) - UNIX_TIMESTAMP(),
-               MAX(`lock_until`) - UNIX_TIMESTAMP()
+               MIN(`last_updated`),
+               MAX(`last_updated`),
+               MIN(`lock_until`),
+               MAX(`lock_until`),
             FROM `...`
-            WHERE `lock_until` > UNIX_TIMESTAMP()
+            WHERE `lock_until` > ...
 
         SELECT COUNT(*),
-               UNIX_TIMESTAMP() - MAX(`lock_until`),
-               UNIX_TIMESTAMP() - MIN(`lock_until`)
+               MIN(`last_updated`),
+               MAX(`last_updated`),
+               MIN(`lock_until`),
+               MAX(`lock_until`),
             FROM `...`
-            WHERE `lock_until` <= UNIX_TIMESTAMP()
+            WHERE `lock_until` <= ...
     """
     _check_table_is_a_string(table)
 
-    delay_thresholds = _to_list(delay_thresholds or ())
+    id_and_now_sql = ('SELECT MIN(`id`), MAX(`id`), UNIX_TIMESTAMP()'
+                      'FROM `%s`' % table)
 
-    for threshold in delay_thresholds:
-        if not isinstance(threshold, (int, long, float)):
-            raise TypeError('delay_thresholds must be numbers, not %r' %
-                            (threshold,))
+    unlocked_sql = ('SELECT'
+                    ' MIN(`last_updated`), MAX(`last_updated`)'
+                    ' FROM `%s` WHERE `lock_until` IS NULL' % table)
 
-    id_sql = 'SELECT MIN(`id`), MAX(`id`) FROM `%s`' % table
-
-    delay_sql = ', SUM(IF(`last_updated` <= UNIX_TIMESTAMP() - ?, 1, 0))'
-
-    # put all the stats that require scanning over the
-    # (`lock_until`, `last_updated`) covering index in the same query
-    updated_sql = ('SELECT COUNT(*),'
-                    # new
-                    ' SUM(IF(`last_updated` IS NULL, 1, 0)),'
-                    # updated
-                    ' UNIX_TIMESTAMP() - MAX(`last_updated`),'
-                    ' UNIX_TIMESTAMP() - MIN(`last_updated`)' +
-                    # delayed
-                    delay_sql * len(delay_thresholds) +
-                    ' FROM `%s`' % table)
-
-    # "locked" and "bumped" queries are cheaper to handle separately;
-    # usually this is a small minority of rows, and this saves us from having
-    # to do another SUM(IF(...)) over the entire table
-    locked_sql = ('SELECT COUNT(*), '
-                  ' MIN(`lock_until`) - UNIX_TIMESTAMP(),'
-                  ' MAX(`lock_until`) - UNIX_TIMESTAMP()'
-                  ' FROM `%s` WHERE `lock_until` > UNIX_TIMESTAMP()' % table)
+    locked_sql = ('SELECT COUNT(*),'
+                   ' MIN(`last_updated`), MAX(`last_updated`),'
+                   ' MIN(`lock_until`), MAX(`lock_until`)'
+                   ' FROM `%s` WHERE `lock_until` > ?' % table)
 
     bumped_sql = ('SELECT COUNT(*),'
-                  ' UNIX_TIMESTAMP() - MAX(`lock_until`),'
-                  ' UNIX_TIMESTAMP() - MIN(`lock_until`)'
-                  ' FROM `%s` WHERE `lock_until` <= UNIX_TIMESTAMP()' % table)
+                  ' MIN(`last_updated`), MAX(`last_updated`),'
+                  ' MIN(`lock_until`), MAX(`lock_until`)'
+                  ' FROM `%s` WHERE `lock_until` <= ?' % table)
 
     def query(cursor):
         r = {}  # results to return
 
-        cursor.execute(id_sql)
-        r['min_id'], r['max_id'] = cursor.fetchall()[0]
-
-        _execute(cursor, updated_sql, delay_thresholds)
-        row = cursor.fetchall()[0]
-        r['total'], r['new'], r['min_update_time'], r['max_update_time'] = (
-            row[:4])
-
-        # unpack "delayed" stats, and convert to float/int
-        r['delayed'] = {}
-        for threshold, amount in zip(delay_thresholds, row[4:]):
-            # (SUM(IF(...)) can produce NULL, so convert None to 0)
-            r['delayed'][float(threshold)] = int(amount or 0)
-
-        cursor.execute(locked_sql)
-        r['locked'], r['min_lock_time'], r['max_lock_time'] = (
-            cursor.fetchall()[0])
-
-        cursor.execute(bumped_sql)
-        r['bumped'], r['min_bump_time'], r['max_bump_time'] = (
-            cursor.fetchall()[0])
-
-        # make sure times are always floats and other numbers are ints
-        # make sure only "_id" stats can be None
-        for key in r:
-            if key.endswith('_time'):
-                r[key] = float(r[key] or 0.0)
-            elif r[key] is None and not key.endswith('_id'):
-                r[key] = 0
-            # (SUM(IF(...)) can produce Decimals with MySQLdb)
-            elif isinstance(r[key], (long, decimal.Decimal)):
+        cursor.execute(id_and_now_sql)
+        r['min_id'], r['max_id'], now = cursor.fetchall()[0]
+        # clean up unnecessary longs
+        for key in ('min_id', 'max_id'):
+            if isinstance(r[key], long):
                 r[key] = int(r[key])
 
-        # compute derived stats now that everything is the right type
-        r['updated'] = r['total'] - r['new']
+        # safe min and max for times that may be None (if no rows)
+        def min_since_now(*times):
+            times = [t for t in times if t is not None]
+            return float(min(times) - now) if times else 0.0
+
+        def max_since_now(*times):
+            times = [t for t in times if t is not None]
+            return float(max(times) - now) if times else 0.0
+
+        cursor.execute(unlocked_sql)
+        # keep track of min/max_last_updated until we have all of them
+        min_lu_0, max_lu_0 = cursor.fetchall()[0]
+
+        _execute(cursor, locked_sql, [now])
+        (count, min_lu_1, max_lu_1,
+         min_lock_until, max_lock_until) = cursor.fetchall()[0]
+        r['locked'] = int(count)
+        r['min_lock_time'] = min_since_now(min_lock_until)
+        r['max_lock_time'] = max_since_now(max_lock_until)
+
+        _execute(cursor, bumped_sql, [now])
+        (count, min_lu_2, max_lu_2,
+         min_lock_until, max_lock_until) = cursor.fetchall()[0]
+        r['bumped'] = int(count)
+        # lock times for bumped IDs are in the past
+        r['min_bump_time'] = -max_since_now(max_lock_until)
+        r['max_bump_time'] = -min_since_now(min_lock_until)
+
+        # now that we have all the update times, calculate min/max
+        # update times are in the past too
+        r['min_update_time'] = -max_since_now(max_lu_0, max_lu_1, max_lu_2)
+        r['max_update_time'] = -min_since_now(min_lu_0, min_lu_1, min_lu_2)
 
         return r
 
-    return _run(query, dbconn, level='READ UNCOMMITTED', read_only=True)
+    return _run(query, dbconn, table, lock_mode='READ', roll_back=True)
 
 
 ### Object-Oriented version ###
@@ -1002,9 +968,9 @@ class DoLoop(object):
         """
         return check(self._make_dbconn(), self._table, id_or_ids)
 
-    def stats(self, delay_thresholds=(ONE_DAY, ONE_WEEK,)):
+    def stats(self):
         """Check on the performance of the task loop as a whole.
 
         See :py:func:`~doloop.stats` for details.
         """
-        return stats(self._make_dbconn(), self._table, delay_thresholds)
+        return stats(self._make_dbconn(), self._table)

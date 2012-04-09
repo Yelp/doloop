@@ -768,20 +768,19 @@ class DoLoopTestCase(unittest.TestCase):
         # type checking
         for key, value in stats.iteritems():
             if key.endswith('_time'):
-                assert isinstance(value, float)
-            # IDs can be anything; we'll check delayed below
-            elif not key.endswith('_id') and key != 'delayed':
-                assert isinstance(value, int)
+                self.assertIsInstance(value, float)
+            # IDs can be anything
+            elif not key.endswith('_id'):
+                self.assertIsInstance(value, int)
 
             # make sure min_ and max_ are in the right order (Issue #12)
             if key.startswith('min_'):
-                max_stat_value = stats['max_' + key[4:]]
-                self.assertLessEqual(value, max_stat_value)
-
-        # more type checking for delayed stats
-        for threshold, amount in stats['delayed'].iteritems():
-            assert isinstance(threshold, float)
-            assert isinstance(amount, int)
+                max_key = 'max_' + key[4:]
+                max_value = stats[max_key]
+                self.assertLessEqual(
+                    value, max_value,
+                    '%s (%r) should be <= %s (%r)' % (
+                        key, value, max_key, max_value))
 
     def test_stats_empty(self):
         loop = self.create_doloop()
@@ -790,11 +789,8 @@ class DoLoopTestCase(unittest.TestCase):
         self._sanity_check_stats(stats)
 
         self.assertEqual(stats, {
-            'total': 0,
             'locked': 0,
             'bumped': 0,
-            'updated': 0,
-            'new': 0,
             'min_id': None,
             'max_id': None,
             # times are 0.0, not None, for convenience
@@ -804,7 +800,6 @@ class DoLoopTestCase(unittest.TestCase):
             'max_bump_time': 0.0,
             'min_update_time': 0.0,
             'max_update_time': 0.0,
-            'delayed': {ONE_DAY: 0, ONE_WEEK: 0},
         })
 
     def test_stats_please_wait_1_sec_or_so(self):
@@ -820,19 +815,16 @@ class DoLoopTestCase(unittest.TestCase):
         self.assertEqual(loop.get(1), [14])
         loop.did(14)
 
-        stats = loop.stats(delay_thresholds=(1, 10))
+        stats = loop.stats()
         self._sanity_check_stats(stats)
 
-        self.assertEqual(stats['total'], 10)  # 10-19
         self.assertEqual(stats['locked'], 2)  # 10, 13
         self.assertEqual(stats['bumped'], 2)  # 12, 15
-        self.assertEqual(stats['updated'], 3)  # 11, 12, 14
-        self.assertEqual(stats['new'], 7)  # 13, 15-19
 
         self.assertEqual(stats['min_id'], 10)
-        assert isinstance(stats['min_id'], int)
+        self.assertIsInstance(stats['min_id'], int)
         self.assertEqual(stats['max_id'], 19)
-        assert isinstance(stats['max_id'], int)
+        self.assertIsInstance(stats['max_id'], int)
 
         # this test should work even if it experienced up to 5 seconds of delay
         self.assertGreaterEqual(stats['min_lock_time'], 55)  # 13
@@ -851,29 +843,9 @@ class DoLoopTestCase(unittest.TestCase):
         self.assertLessEqual(stats['max_update_time'], 6)
         self.assertGreater(stats['max_update_time'], stats['min_update_time'])
 
-        self.assertEqual(stats['delayed'], {1: 2, 10: 0})  # 11, 12
-
     def test_stats_table_must_be_a_string(self):
         self.assertRaises(TypeError,
                       doloop.stats, 'foo_loop', self.make_dbconn())
-
-    def test_stats_delay_thresholds_must_be_numbers(self):
-        loop = self.create_doloop()
-
-        loop.stats(delay_thresholds=(1, 10, 100))
-        loop.stats(delay_thresholds=set([1000, 10000]))
-        loop.stats(delay_thresholds=[1234.5])  # float is okay
-
-        loop.stats(delay_thresholds=())  # empty is okay
-
-        stats = loop.stats(delay_thresholds=100000)  # single value is okay
-        self.assertEqual(sorted(stats['delayed']), [100000])
-
-        stats = loop.stats(delay_thresholds={1: 2, 3: 4})  # dict is okay
-        self.assertEqual(sorted(stats['delayed']), [1, 3])
-
-        self.assertRaises(TypeError, loop.stats, delay_thresholds=[[1, 2, 3]])
-        self.assertRaises(TypeError, loop.stats, delay_thresholds='GNAR')
 
     def test_stats_re_raises_exception(self):
         # stats() runs in READ UNCOMMITTED mode (no locking), so we should
