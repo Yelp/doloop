@@ -172,19 +172,18 @@ def _to_list(x):
 
 
 def _run(query, dbconn, table, lock_mode, roll_back):
-    """Run a query, optionally locking a tables. If an exception
-    is thrown, we unlock the tables and roll back the transaction
+    """Run a query with a single table locked. If an exception
+    is thrown, we roll back the transaction and then unlock the table
     before re-raising the exception.
 
-    :param dbconn: any DBI-compliant MySQL connection object
     :param query: a function which takes a db cursor as its only argument
+    :param dbconn: any DBI-compliant MySQL connection object
     :param table: table to lock while running the query
-    :param bool read_only: mode to lock *table* in (e.g. ``'WRITE'``)
+    :param bool lock_mode: mode to lock *table* in (e.g. ``'WRITE'``)
     :param bool roll_back: if true, always roll back after issuing the query
 
     If there is already a transaction in progress on *dbconn*, we'll roll
-    it back, and unlock any tables currently locked. If something goes wrong
-    during the query, we'll roll back, and unlock any tables we locked.
+    it back, and unlock any tables currently locked.
     """
     dbconn.rollback()
 
@@ -778,7 +777,9 @@ def stats(dbconn, table):
 
     This function does not require write access to your database.
 
-    Runs these queries with a read lock on *table*:
+    :py:func:`stats` only scans locked/bumped rows and use indexes for
+    everything else, so it should be very fast except in pathological cases.
+    It runs these queries with a read lock on *table*:
 
     .. code-block:: sql
 
