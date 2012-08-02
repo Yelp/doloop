@@ -723,7 +723,7 @@ def check(dbconn, table, id_or_ids):
     This function does not require write access to your database and does not
     lock tables.
 
-    Runs this query with a read lock on *table*:
+    Runs this query:
 
     .. code-block:: sql
 
@@ -783,7 +783,7 @@ def stats(dbconn, table):
 
     :py:func:`stats` only scans locked/bumped rows and use indexes for
     everything else, so it should be very fast except in pathological cases.
-    It runs these queries with a read lock on *table*:
+    It runs these queries:
 
     .. code-block:: sql
 
