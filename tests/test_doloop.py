@@ -26,6 +26,7 @@ import warnings
 
 try:
     import unittest2 as unittest
+    unittest  # silence pyflakes warning
 except ImportError:
     import unittest
 
@@ -33,9 +34,7 @@ except ImportError:
 import doloop
 from doloop import DEFAULT_ID_TYPE
 from doloop import DEFAULT_STORAGE_ENGINE
-from doloop import ONE_DAY
 from doloop import ONE_HOUR
-from doloop import ONE_WEEK
 from doloop import _main_for_create_doloop_table
 
 # support arbitrary MySQL drivers
