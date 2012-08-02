@@ -179,7 +179,8 @@ def _run(query, dbconn, table, lock_mode, roll_back):
     :param query: a function which takes a db cursor as its only argument
     :param dbconn: any DBI-compliant MySQL connection object
     :param table: table to lock while running the query
-    :param bool lock_mode: mode to lock *table* in (e.g. ``'WRITE'``)
+    :param str lock_mode: mode to lock *table* in (e.g. ``'WRITE'``), or
+                          ``None`` if *table* shouldn't be locked
     :param bool roll_back: if true, always roll back after issuing the query
 
     If there is already a transaction in progress on *dbconn*, we'll roll
@@ -193,7 +194,8 @@ def _run(query, dbconn, table, lock_mode, roll_back):
         cursor.execute('UNLOCK TABLES')
 
         cursor.execute('SET autocommit = 0')
-        cursor.execute('LOCK TABLES `%s` %s' % (table, lock_mode))
+        if lock_mode is not None:
+            cursor.execute('LOCK TABLES `%s` %s' % (table, lock_mode))
 
         result = query(cursor)
 
@@ -718,7 +720,8 @@ def check(dbconn, table, id_or_ids):
     locked_for)``, that is, the current time minus ``last_updated``, and
     ``lock_for`` minus the current time (both of these in seconds).
 
-    This function does not require write access to your database.
+    This function does not require write access to your database and does not
+    lock tables.
 
     Runs this query with a read lock on *table*:
 
@@ -747,7 +750,7 @@ def check(dbconn, table, id_or_ids):
         return dict((id_, (since_updated, locked_for))
                     for id_, since_updated, locked_for in cursor.fetchall())
 
-    return _run(query, dbconn, table, lock_mode='READ', roll_back=True)
+    return _run(query, dbconn, table, lock_mode=None, roll_back=True)
 
 
 def stats(dbconn, table):
@@ -775,7 +778,8 @@ def stats(dbconn, table):
     Only *min_id* and *max_id* can be ``None`` (when the table is empty).
     Everything else defaults to zero.
 
-    This function does not require write access to your database.
+    This function does not require write access to your database and does not
+    lock tables.
 
     :py:func:`stats` only scans locked/bumped rows and use indexes for
     everything else, so it should be very fast except in pathological cases.
@@ -870,7 +874,7 @@ def stats(dbconn, table):
 
         return r
 
-    return _run(query, dbconn, table, lock_mode='READ', roll_back=True)
+    return _run(query, dbconn, table, lock_mode=None, roll_back=True)
 
 
 ### Object-Oriented version ###
