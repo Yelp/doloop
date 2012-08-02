@@ -749,16 +749,6 @@ class DoLoopTestCase(unittest.TestCase):
         self.assertRaises(TypeError,
                       doloop.check, self.make_dbconn(), 999, 'foo_loop')
 
-    def test_check_unlocks_tables_after_exception(self):
-        loop, dbconn = self.create_doloop_and_wrapped_dbconn()
-
-        loop.add([10, 11, 12, 13, 14])
-
-        dbconn.raise_exception_later(LOCK_WAIT_TIMEOUT_EXC, num_queries=2)
-        self.assertRaises(mysql_module.OperationalError, loop.check, 10)
-
-        self.assertEqual(loop.check(10), {10: (None, None)})
-
     ### tests for stats() ###
 
     def _sanity_check_stats(self, stats):
