@@ -783,7 +783,7 @@ def stats(dbconn, table):
 
     :py:func:`stats` only scans locked/bumped rows and use indexes for
     everything else, so it should be very fast except in pathological cases.
-    It runs these queries:
+    It runs these queries in a single transaction:
 
     .. code-block:: sql
 
