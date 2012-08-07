@@ -1,4 +1,4 @@
-# Copyright 2011 Yelp
+# Copyright 2011-2012 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -36,10 +36,11 @@ from __future__ import with_statement
 __author__ = 'David Marin <dave@yelp.com>'
 
 __credits__ = [
+    'Steve Johnson <sjohnson@yelp.com>',
     'Jennifer Snyder <jsnyder@yelp.com>',
 ]
 
-__version__ = '0.4.0'
+__version__ = '0.4.1'
 
 import inspect
 import optparse
