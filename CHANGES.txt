@@ -1,3 +1,6 @@
+v0.4.1, 2012-08-07 -- Just use transactions for read-only operations
+ * check() and stats() no longer explicitly lock tables (Issue #22)
+
 v0.4.0, 2012-04-09 -- Make stats() cheaper
  * stats() does less, but avoids scanning all rows
 
