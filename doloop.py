@@ -175,7 +175,7 @@ def _to_list(x):
 def _run(query, dbconn, roll_back, table_to_lock=None):
     """Run a query with a single table locked. If an exception
     is thrown, we roll back the transaction and then unlock the table
-    before re-raising the exception.
+    before re-raising the exception. The locks are LOW_PRIORITY WRITE locks.
 
     :param query: a function which takes a db cursor as its only argument
     :param dbconn: any DBI-compliant MySQL connection object
@@ -196,7 +196,12 @@ def _run(query, dbconn, roll_back, table_to_lock=None):
 
         cursor.execute('SET autocommit = 0')
         if table_to_lock:
-            cursor.execute('LOCK TABLES `%s` WRITE' % table_to_lock)
+
+            # We use LOW_PRIORITY WRITE locks for get(), did(), and bump()
+            # to ensure that the read-only calls like stats() are not starved.
+            # Docs: http://dev.mysql.com/doc/refman/5.0/en/lock-tables.html
+            cursor.execute(
+                'LOCK TABLES `%s` LOW_PRIORITY WRITE' % table_to_lock)
 
         result = query(cursor)
 
