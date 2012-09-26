@@ -199,7 +199,7 @@ def _run(query, dbconn, roll_back, table_to_lock=None):
 
             # We use LOW_PRIORITY WRITE locks for get(), did(), and bump()
             # to ensure that the read-only calls like stats() are not starved.
-            # Docs: http://dev.mysql.com/doc/refman/5.0/en/lock-tables.html
+            # Docs: http://dev.mysql.com/doc/refman/5.5/en/lock-tables.html
             cursor.execute(
                 'LOCK TABLES `%s` LOW_PRIORITY WRITE' % table_to_lock)
 
