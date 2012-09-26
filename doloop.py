@@ -489,8 +489,6 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
     if limit == 0:
         return []
 
-    # order by ID as a tie-breaker, to make tests consistent
-
     select_bumped = ('SELECT `id` FROM `%s`'
                      ' WHERE `lock_until` <= UNIX_TIMESTAMP()'
                      ' ORDER BY `lock_until`, `last_updated`'
