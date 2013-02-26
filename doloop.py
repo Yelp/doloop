@@ -40,7 +40,7 @@ __credits__ = [
     'Jennifer Snyder <jsnyder@yelp.com>',
 ]
 
-__version__ = '0.4.1'
+__version__ = '0.4.2'
 
 import inspect
 import optparse
@@ -192,6 +192,8 @@ def _run(query, dbconn, roll_back, table_to_lock=None):
     cursor = dbconn.cursor()
 
     try:
+        cursor.execute('START TRANSACTION')
+
         cursor.execute('UNLOCK TABLES')
 
         cursor.execute('SET autocommit = 0')
