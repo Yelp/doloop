@@ -1,4 +1,4 @@
-# Copyright 2011-2012 Yelp
+# Copyright 2011-2015 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -665,6 +665,9 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True, test=False):
     :param str table: name of your task loop table
     :param id_or_ids: ID or list of IDs
     :param lock_for: Number of seconds that the IDs should stay locked.
+                     If a 2-tuple (min_lock_for, max_lock_for) is provided,
+                     each ID is given a random lock_for N such that
+                     min_lock_for <= N < max_lock_for.
     :param bool auto_add: Add any IDs that are not already in the table.
     :param test: If ``True``, don't actually write to the database
 
@@ -686,25 +689,40 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True, test=False):
     """
     _check_table_is_a_string(table)
 
-    if not isinstance(lock_for, (int, long, float)):
-        raise TypeError('lock_for must be a number, not %r' %
-                        (lock_for,))
+    lock_for_values = _to_list(lock_for)
+    if not (1 <= len(lock_for_values) <= 2 and all(
+        isinstance(lock_for_value, (int, long, float))
+        for lock_for_value in lock_for_values
+    )):
+        raise TypeError('lock_for must be a number or 2-tuple of numbers, not'
+                        '%r' % (lock_for,))
+
+    if len(lock_for_values) == 1:
+        lock_for_sql = '?'
+        params = [lock_for]
+    else:
+        min_lock_for, max_lock_for = lock_for_values
+        if min_lock_for > max_lock_for:
+            raise ValueError('min_lock_for must not exceed max_lock_for')
+        lock_for_sql = 'FLOOR(? + RAND() * (? - ?))'
+        params = [min_lock_for, max_lock_for, min_lock_for]
 
     ids = _to_list(id_or_ids)
     if not ids:
         return 0
+    params += ids
 
-    sql = ('UPDATE `%s` SET `lock_until` = UNIX_TIMESTAMP() + ?'
+    sql = ('UPDATE `%s` SET `lock_until` = UNIX_TIMESTAMP() + @lock_for := %s'
            ' WHERE'
            ' (`lock_until` IS NULL OR'
-           ' `lock_until` > UNIX_TIMESTAMP() + ?)'
+           ' `lock_until` > UNIX_TIMESTAMP() + @lock_for)'
            ' AND `id` IN (%s)' %
-           (table, ', '.join('?' for _ in ids)))
+           (table, lock_for_sql, ', '.join('?' for _ in ids)))
 
     def query(cursor):
         if auto_add:
             _add(cursor, table, ids)
-        _execute(cursor, sql, [lock_for, lock_for] + ids)
+        _execute(cursor, sql, params)
         return cursor.rowcount
 
     return _run(query, dbconn, roll_back=test, table_to_lock=table)

@@ -644,6 +644,19 @@ class DoLoopTestCase(unittest.TestCase):
 
         self.assertEqual(loop.get(5), [12, 17, 19, 10, 11])
 
+    def test_bump_random_lock_for(self):
+        loop = self.create_doloop()
+        loop.add([10, 11, 12, 13, 14, 15, 16, 17, 18, 19])
+
+        self.assertEqual(loop.bump([10, 12, 14], lock_for=(-10, 0)), 3)
+        self.assertEqual(loop.bump(16, lock_for=(-2000, -1000)), 1)
+        self.assertEqual(loop.bump([11, 13, 15, 17], lock_for=(-150, -100)), 4)
+
+        self.assertEqual(loop.get(1), [16])
+        self.assertItemsEqual(loop.get(4), [11, 13, 15, 17])
+        self.assertItemsEqual(loop.get(3), [10, 12, 14])
+        self.assertItemsEqual(loop.get(2), [18, 19])
+
     def test_bump_same_id_twice_please_wait_4_secs_or_so(self):
         loop = self.create_doloop()
         loop.add([10, 11, 12, 13, 14, 15, 16, 17, 18, 19])
@@ -680,7 +693,7 @@ class DoLoopTestCase(unittest.TestCase):
         self.assertRaises(TypeError,
                       doloop.bump, self.make_dbconn(), 999, 'foo_loop')
 
-    def test_bump_min_loop_time_must_be_a_number(self):
+    def test_bump_lock_for_must_be_a_number_or_min_max_tuple(self):
         loop = self.create_doloop()
         loop.add(17)
 
@@ -688,9 +701,12 @@ class DoLoopTestCase(unittest.TestCase):
         loop.bump(17, lock_for=20.5)
         loop.bump(17, lock_for=0)
         loop.bump(17, lock_for=-11.1)  # negative is okay
+        loop.bump(17, lock_for=(-5, 5))  # min/max tuple is okay
+        loop.bump(17, lock_for=(3, 3))
 
         self.assertRaises(TypeError, loop.bump, 17, lock_for=None)
         self.assertRaises(TypeError, loop.bump, 17, lock_for=[1, 2, 3])
+        self.assertRaises(ValueError, loop.bump, 17, lock_for=(5, -5))
 
     def test_bump_unlocks_tables_after_exception(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()

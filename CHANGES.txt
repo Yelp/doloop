@@ -1,3 +1,5 @@
+v0.4.3 2015-06-02 -- Support bumping IDs with randomly chosen lock_for
+
 v0.4.2 2013-02-24 -- Issue START TRANSACTION for every operation
 
 v0.4.1, 2012-08-07 -- Just use transactions for read-only operations
