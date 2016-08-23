@@ -796,10 +796,18 @@ class PyMySQLTestCase(unittest.TestCase):
             if key.startswith('min_'):
                 max_key = 'max_' + key[4:]
                 max_value = stats[max_key]
-                self.assertLessEqual(
-                    value, max_value,
-                    '%s (%r) should be <= %s (%r)' % (
-                        key, value, max_key, max_value))
+
+                if value is None or max_value is None:
+                    # can't compare None <= None in Python 3
+                    self.assertEqual(
+                        value, max_value,
+                        '%s (%r) should be <= %s (%r)' % (
+                            key, value, max_key, max_value))
+                else:
+                    self.assertLessEqual(
+                        value, max_value,
+                        '%s (%r) should be <= %s (%r)' % (
+                            key, value, max_key, max_value))
 
     def test_stats_empty(self):
         loop = self.create_doloop()
