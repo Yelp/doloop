@@ -30,6 +30,15 @@ try:
 except ImportError:
     import unittest
 
+try:
+    import MySQLdb
+    MySQLdb
+except ImportError:
+    MySQLdb = None
+
+import mysql.connector
+import oursql
+import pymysql
 
 import doloop
 from doloop import DEFAULT_ID_TYPE
@@ -37,23 +46,11 @@ from doloop import DEFAULT_STORAGE_ENGINE
 from doloop import ONE_HOUR
 from doloop import _main_for_create_doloop_table
 
-# support arbitrary MySQL drivers
-PYTHON_MYSQL_MODULE = os.environ.get('PYTHON_MYSQL_MODULE') or 'MySQLdb'
-__import__(PYTHON_MYSQL_MODULE)
-mysql_module = sys.modules[PYTHON_MYSQL_MODULE]
-
-
 log = logging.getLogger('doloop_test')
 
 WHITESPACE_RE = re.compile('\s+')
 
 MAX_MYSQLD_STARTUP_TIME = 15
-
-# A DBI exception we're likely to encounter. Usually error code comes first,
-# but we put it second to support mysql.connector; the other drivers don't seem
-# to mind
-LOCK_WAIT_TIMEOUT_EXC = mysql_module.OperationalError(
-    'Lock wait timeout exceeded; try restarting transaction', 1205)
 
 
 class ExceptionRaisingDbConnWrapper(object):
@@ -102,10 +99,9 @@ class ExceptionRaisingCursorWrapper(object):
         return getattr(self._cursor, attr)
 
 
-class DoLoopTestCase(unittest.TestCase):
+class PyMySQLTestCase(unittest.TestCase):
 
-    # we put all these tests in the same TestCase so we only have to
-    # start up MySQL once
+    MYSQL_MODULE = pymysql
 
     @classmethod
     def setUpClass(self):
@@ -187,12 +183,11 @@ class DoLoopTestCase(unittest.TestCase):
         dbconn.cursor().execute('CREATE DATABASE `doloop`')
 
     def _connect(self, **kwargs):
-        """Connect using MySQLdb or whatever driver is specified
-        through the PYTHON_MYSQL_MODULE environment variable."""
+        """Connect using self.MYSQL_MODULE.connect"""
         # PyMySQL requires user (though it may be empty)
         if not 'user' in kwargs:
             kwargs['user'] = ''
-        return mysql_module.connect(**kwargs)
+        return self.MYSQL_MODULE.connect(**kwargs)
 
     def make_dbconn(self):
         return self._connect(unix_socket=self.mysql_socket, db='doloop')
@@ -213,6 +208,11 @@ class DoLoopTestCase(unittest.TestCase):
         dbconn = ExceptionRaisingDbConnWrapper(self.make_dbconn())
         doloop.create(dbconn, table, id_type=id_type, engine=engine)
         return doloop.DoLoop(dbconn, table), dbconn
+
+    def create_lock_wait_timeout_exc(self):
+        """Create a DB exception that we're likely to encounter."""
+        return self.MYSQL_MODULE.OperationalError(
+            'Lock wait timeout exceeded; try restarting transaction', 1205)
 
     ### tests for database wrapper ###
 
@@ -293,8 +293,9 @@ class DoLoopTestCase(unittest.TestCase):
     def test_create_re_raises_exception(self):
         dbconn = ExceptionRaisingDbConnWrapper(self.make_dbconn())
 
-        dbconn.raise_exception_later(LOCK_WAIT_TIMEOUT_EXC, num_queries=1)
-        self.assertRaises(mysql_module.OperationalError,
+        dbconn.raise_exception_later(self.create_lock_wait_timeout_exc(),
+                                     num_queries=1)
+        self.assertRaises(self.MYSQL_MODULE.OperationalError,
                       doloop.create, dbconn, 'foo_loop')
 
     ### tests for add() ###
@@ -345,8 +346,9 @@ class DoLoopTestCase(unittest.TestCase):
     def test_add_unlocks_tables_after_exception(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
 
-        dbconn.raise_exception_later(LOCK_WAIT_TIMEOUT_EXC, num_queries=3)
-        self.assertRaises(mysql_module.OperationalError, loop.add, 42)
+        dbconn.raise_exception_later(self.create_lock_wait_timeout_exc(),
+                                     num_queries=3)
+        self.assertRaises(self.MYSQL_MODULE.OperationalError, loop.add, 42)
 
         self.assertEqual(loop.add(42), 1)
 
@@ -386,8 +388,9 @@ class DoLoopTestCase(unittest.TestCase):
 
         loop.add([10, 11, 12, 13, 14])
 
-        dbconn.raise_exception_later(LOCK_WAIT_TIMEOUT_EXC, num_queries=3)
-        self.assertRaises(mysql_module.OperationalError, loop.remove, 10)
+        dbconn.raise_exception_later(self.create_lock_wait_timeout_exc(),
+                                     num_queries=3)
+        self.assertRaises(self.MYSQL_MODULE.OperationalError, loop.remove, 10)
 
         self.assertEqual(loop.remove(11), 1)
 
@@ -505,8 +508,9 @@ class DoLoopTestCase(unittest.TestCase):
 
         loop.add([10, 11, 12, 13, 14])
 
-        dbconn.raise_exception_later(LOCK_WAIT_TIMEOUT_EXC, num_queries=3)
-        self.assertRaises(mysql_module.OperationalError, loop.get, 2)
+        dbconn.raise_exception_later(self.create_lock_wait_timeout_exc(),
+                                     num_queries=3)
+        self.assertRaises(self.MYSQL_MODULE.OperationalError, loop.get, 2)
 
         self.assertEqual(loop.get(2), [10, 11])
 
@@ -555,8 +559,9 @@ class DoLoopTestCase(unittest.TestCase):
 
         loop.add([10, 11, 12, 13, 14])
 
-        dbconn.raise_exception_later(LOCK_WAIT_TIMEOUT_EXC, num_queries=3)
-        self.assertRaises(mysql_module.OperationalError, loop.did, 10)
+        dbconn.raise_exception_later(self.create_lock_wait_timeout_exc(),
+                                     num_queries=3)
+        self.assertRaises(self.MYSQL_MODULE.OperationalError, loop.did, 10)
 
         self.assertEqual(loop.did(11), 1)
 
@@ -621,8 +626,9 @@ class DoLoopTestCase(unittest.TestCase):
         loop.add([10, 11, 12, 13, 14])
         self.assertEqual(loop.get(3), [10, 11, 12])
 
-        dbconn.raise_exception_later(LOCK_WAIT_TIMEOUT_EXC, num_queries=3)
-        self.assertRaises(mysql_module.OperationalError, loop.unlock, 11)
+        dbconn.raise_exception_later(self.create_lock_wait_timeout_exc(),
+                                     num_queries=3)
+        self.assertRaises(self.MYSQL_MODULE.OperationalError, loop.unlock, 11)
 
         self.assertEqual(loop.unlock(10), 1)
 
@@ -697,8 +703,9 @@ class DoLoopTestCase(unittest.TestCase):
 
         loop.add([10, 11, 12, 13, 14])
 
-        dbconn.raise_exception_later(LOCK_WAIT_TIMEOUT_EXC, num_queries=3)
-        self.assertRaises(mysql_module.OperationalError, loop.bump, 14)
+        dbconn.raise_exception_later(self.create_lock_wait_timeout_exc(),
+                                     num_queries=3)
+        self.assertRaises(self.MYSQL_MODULE.OperationalError, loop.bump, 14)
 
         self.assertEqual(loop.bump(13), 1)
 
@@ -754,8 +761,9 @@ class DoLoopTestCase(unittest.TestCase):
 
         loop.add([10, 11, 12, 13, 14])
 
-        dbconn.raise_exception_later(LOCK_WAIT_TIMEOUT_EXC, num_queries=2)
-        self.assertRaises(mysql_module.OperationalError, loop.check, 10)
+        dbconn.raise_exception_later(self.create_lock_wait_timeout_exc(),
+                                     num_queries=2)
+        self.assertRaises(self.MYSQL_MODULE.OperationalError, loop.check, 10)
 
         self.assertEqual(loop.check(10), {10: (None, None)})
 
@@ -851,8 +859,9 @@ class DoLoopTestCase(unittest.TestCase):
         # never encounter a deadlock or lock wait timeout
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
 
-        dbconn.raise_exception_later(LOCK_WAIT_TIMEOUT_EXC, num_queries=5)
-        self.assertRaises(mysql_module.OperationalError, loop.stats)
+        dbconn.raise_exception_later(self.create_lock_wait_timeout_exc(),
+                                     num_queries=5)
+        self.assertRaises(self.MYSQL_MODULE.OperationalError, loop.stats)
 
     ### tests for the DoLoop wrapper object ###
 
@@ -885,6 +894,22 @@ class DoLoopTestCase(unittest.TestCase):
         # whoops, table and connection name are reversed
         self.assertRaises(TypeError,
                           doloop.DoLoop, 'foo_loop', self.make_dbconn())
+
+
+class MySQLConnectorTestCase(PyMySQLTestCase):
+
+    MYSQL_MODULE = mysql.connector
+
+
+class OurSQLTestCase(PyMySQLTestCase):
+
+    MYSQL_MODULE = oursql
+
+
+@unittest.skipIf(MySQLdb is None, 'MySQLdb not installed')
+class MySQLdbTestCase(PyMySQLTestCase):
+
+    MYSQL_MODULE = MySQLdb
 
 
 class CreateDoloopTableScriptTestCase(unittest.TestCase):
