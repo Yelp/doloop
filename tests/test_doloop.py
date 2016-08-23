@@ -56,6 +56,7 @@ from doloop import DEFAULT_ID_TYPE
 from doloop import DEFAULT_STORAGE_ENGINE
 from doloop import ONE_HOUR
 from doloop import _main_for_create_doloop_table
+from doloop import _to_list
 
 log = logging.getLogger('doloop_test')
 
@@ -1000,6 +1001,30 @@ class CreateDoloopTableScriptTestCase(unittest.TestCase):
             self.assertEqual(
                 output,
                 doloop.sql_for_create('foo_loop', engine='MyISAM') + ';\n\n')
+
+
+class ToListTestCase(unittest.TestCase):
+
+    def test_None(self):
+        self.assertEqual(_to_list(None), [None])
+
+    def test_bytes(self):
+        self.assertEqual(_to_list(b'abcd'), [b'abcd'])
+
+    def test_str(self):
+        self.assertEqual(_to_list('efgh'), ['efgh'])
+
+    def test_int(self):
+        self.assertEqual(_to_list(1), [1])
+
+    def test_list(self):
+        self.assertEqual(_to_list([1, 2, 3]), [1, 2, 3])
+
+    def test_tuple(self):
+        self.assertEqual(_to_list(('one', 'two')), ['one', 'two'])
+
+    def test_sequence(self):
+        self.assertEqual(_to_list(x for x in 'cats'), ['c', 'a', 't', 's'])
 
 
 if __name__ == '__main__':

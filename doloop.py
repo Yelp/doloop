@@ -177,7 +177,7 @@ def _execute(cursor, qmark_query, params):
 def _to_list(x):
     if isinstance(x, list):
         return x
-    elif isinstance(x, string_types):  # need this for Python 3
+    elif isinstance(x, (string_types, bytes)):  # need this for Python 3
         return [x]
     elif hasattr(x, '__iter__'):
         return list(x)
