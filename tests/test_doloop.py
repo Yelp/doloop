@@ -30,15 +30,20 @@ try:
 except ImportError:
     import unittest
 
+import mysql.connector
+import pymysql
+
 try:
     import MySQLdb
     MySQLdb
 except ImportError:
     MySQLdb = None
 
-import mysql.connector
-import oursql
-import pymysql
+try:
+    import oursql
+    oursql
+except ImportError:
+    oursql = None
 
 import doloop
 from doloop import DEFAULT_ID_TYPE
@@ -902,6 +907,7 @@ class MySQLConnectorTestCase(PyMySQLTestCase):
     MYSQL_MODULE = mysql.connector
 
 
+@unittest.skipIf(MySQLdb is None, 'MySQLdb not installed')
 class OurSQLTestCase(PyMySQLTestCase):
 
     MYSQL_MODULE = oursql

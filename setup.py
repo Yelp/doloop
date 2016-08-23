@@ -32,6 +32,7 @@ try:
     # only add MySQLdb for Python 2
     if sys.version_info < (3, 0):
         setuptools_kwargs['tests_require'].append('MySQL-python')
+        setuptools_kwargs['tests_require'].append('oursql')
 
 except ImportError:
     from distutils.core import setup
