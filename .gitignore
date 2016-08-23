@@ -2,7 +2,7 @@
 *.pyc
 *~
 *.swp
-
+/.eggs
 build
 dist
 doloop.egg-info
