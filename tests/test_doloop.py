@@ -274,7 +274,8 @@ class PyMySQLTestCase(unittest.TestCase):
         myisam_loop = self.create_doloop('myisam_loop', engine='MyISAM')
 
         # verify that engine arg was actually passed through
-        cursor = self.make_dbconn().cursor()
+        conn = self.make_dbconn()
+        cursor = conn.cursor()
         # oursql 0.9.2 appears not to support SHOW CREATE TABLE,
         # so use INFORMATION_SCHEMA instead.
         cursor.execute(
@@ -288,7 +289,7 @@ class PyMySQLTestCase(unittest.TestCase):
 
     def test_create_table_must_be_a_string(self):
         self.assertRaises(TypeError,
-                      doloop.create, 'foo_loop', self.make_dbconn())
+                          doloop.create, 'foo_loop', self.make_dbconn())
 
     def test_create_re_raises_exception(self):
         dbconn = ExceptionRaisingDbConnWrapper(self.make_dbconn())
