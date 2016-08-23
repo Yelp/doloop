@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from StringIO import StringIO
 import logging
 import optparse
 import os
@@ -23,6 +22,13 @@ import sys
 import tempfile
 import time
 import warnings
+
+# Python 2/3 compatibility
+if sys.version_info[0] == 2:
+    from StringIO import StringIO
+else:
+    from io import StringIO
+StringIO
 
 try:
     import unittest2 as unittest
@@ -143,7 +149,7 @@ class PyMySQLTestCase(unittest.TestCase):
         log.info('started mysqld in %s' % self.mysql_dir)
         self.mysqld_proc = Popen(args, stderr=PIPE, stdout=PIPE)
         # wait for mysqld to start up
-        for _ in xrange(MAX_MYSQLD_STARTUP_TIME):
+        for _ in range(MAX_MYSQLD_STARTUP_TIME):
             if os.path.exists(self.mysql_socket):
                 return
             log.info('%s does not yet exist, sleeping for 1 second' %
@@ -270,7 +276,7 @@ class PyMySQLTestCase(unittest.TestCase):
 
         # so use a dict comprehension:
         id_lower_to_status = dict((id_.lower(), status)
-                                  for id_, status in id_to_status.iteritems())
+                                  for id_, status in id_to_status.items())
         self.assertIn('bbb', id_lower_to_status)
         self.assertIn('Bbb'.lower(), id_lower_to_status)
         self.assertIn('BBB'.lower(), id_lower_to_status)
@@ -779,7 +785,7 @@ class PyMySQLTestCase(unittest.TestCase):
         """Type-check the results of stats, and make sure "min_"
         stats are <= their corresponding "max_" stats."""
         # type checking
-        for key, value in stats.iteritems():
+        for key, value in stats.items():
             if key.endswith('_time'):
                 self.assertIsInstance(value, float)
             # IDs can be anything

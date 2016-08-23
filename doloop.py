@@ -31,6 +31,7 @@ Run one or more workers (e.g in a crontab), with code like this::
     doloop.did(dbconn, 'foo_loop', foo_ids)
 
 """
+from __future__ import print_function
 from __future__ import with_statement
 
 __author__ = 'David Marin <dave@yelp.com>'
@@ -60,6 +61,16 @@ DEFAULT_ID_TYPE = 'int'
 
 #: Default storage engine for doloop tables
 DEFAULT_STORAGE_ENGINE = 'InnoDB'
+
+
+### Python 2/3 compatibility ###
+if sys.version_info[0] == 2:
+    integer_types = (int, long)
+    string_types = (basestring,)
+else:
+    integer_types = (int,)
+    string_types = (str,)
+
 
 
 ### MySQL module compabitibility ###
@@ -152,7 +163,7 @@ def _execute(cursor, qmark_query, params):
         # try format (most common) and then qmark
         try:
             cursor.execute(format_query, params)
-        except Exception, e:
+        except Exception as e:
             if e.__class__.__name__ not in _WRONG_PARAMSTYLE_EXC_NAMES:
                 raise
             cursor.execute(qmark_query, params)
@@ -219,7 +230,7 @@ def _run(query, dbconn, roll_back, table_to_lock=None):
 
 def _check_table_is_a_string(table):
     """Check that table is a string, to avoid cryptic SQL errors"""
-    if not isinstance(table, basestring):
+    if not isinstance(table, string_types):
         raise TypeError('table must be a string, not %r' % (table,))
 
 
@@ -304,10 +315,10 @@ def _main_for_create_doloop_table(args):
         parser.error('You must specify at least one table name')
 
     for table in tables:
-        print sql_for_create(table,
+        print(sql_for_create(table,
                              id_type=options.id_type,
-                             engine=options.engine) + ';'
-        print
+                             engine=options.engine) + ';')
+        print()
 
 
 ### Adding and removing IDs ###
@@ -465,17 +476,17 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
 
     _check_table_is_a_string(table)
 
-    if not isinstance(lock_for, (int, long, float)):
+    if not isinstance(lock_for, (integer_types, float)):
         raise TypeError('lock_for must be a number, not %r' % (lock_for,))
 
     if not lock_for > 0:
         raise ValueError('lock_for must be positive, not %d' % (lock_for,))
 
-    if not isinstance(min_loop_time, (int, long, float)):
+    if not isinstance(min_loop_time, (integer_types, float)):
         raise TypeError('min_loop_time must be a number, not %r' %
                         (min_loop_time,))
 
-    if not isinstance(limit, (int, long)):
+    if not isinstance(limit, integer_types):
         raise TypeError('limit must be an integer, not %r' % (limit,))
 
     if not limit >= 0:
@@ -686,7 +697,7 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True, test=False):
     """
     _check_table_is_a_string(table)
 
-    if not isinstance(lock_for, (int, long, float)):
+    if not isinstance(lock_for, (integer_types, float)):
         raise TypeError('lock_for must be a number, not %r' %
                         (lock_for,))
 
@@ -837,10 +848,12 @@ def stats(dbconn, table):
 
         cursor.execute(id_and_now_sql)
         r['min_id'], r['max_id'], now = cursor.fetchall()[0]
-        # clean up unnecessary longs
-        for key in ('min_id', 'max_id'):
-            if isinstance(r[key], long):
-                r[key] = int(r[key])
+
+        # clean up unnecessary longs (Python 2 only)
+        if sys.version_info[0] == 2:
+            for key in ('min_id', 'max_id'):
+                if isinstance(r[key], long):
+                    r[key] = int(r[key])
 
         # safe min and max for times that may be None (if no rows)
         def min_since_now(*times):
