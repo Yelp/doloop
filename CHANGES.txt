@@ -1,4 +1,6 @@
 v1.0.0 2016-08-26 -- Python 3 support
+ * dropped support for Python 2.5
+ * added support for Python 3.3+
 
 v0.4.2 2013-02-24 -- Issue START TRANSACTION for every operation
 
