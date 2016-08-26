@@ -10,6 +10,6 @@ install or administer a separate server.
 - `MySQL Connector <https://dev.mysql.com/downloads/connector/python/>`_
 - `MySQL-Python <http://mysql-python.sourceforge.net/>`_
 - `oursql <https://launchpad.net/oursql>`_
-- `PyMySQL <https://github.com/petehunt/PyMySQL/>`_,
+- `PyMySQL <https://github.com/PyMySQL/PyMySQL/>`_
 
 See http://packages.python.org/doloop for tutorial and documentation.

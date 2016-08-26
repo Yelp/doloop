@@ -1,8 +1,3 @@
-.. doloop documentation master file, created by
-   sphinx-quickstart on Fri Jul  8 14:14:31 2011.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
-
 doloop - a task loop for keeping things updated
 ===============================================
 
@@ -16,10 +11,12 @@ It is concurrency-safe and supports prioritization.
 `MySQL <http://dev.mysql.com>`_; it does not require you to
 install or administer a separate server.
 
-:py:mod:`doloop` works with `MySQLdb <http://mysql-python.sourceforge.net/>`_
-or any other DBI-compliant Python MySQL library (e.g.
-`PyMySQL <https://github.com/petehunt/PyMySQL/>`_,
-`oursql <https://launchpad.net/oursql>`_).
+:py:mod:`doloop` works with any DBI-compliant Python MySQL library, including:
+
+- `MySQL Connector <https://dev.mysql.com/downloads/connector/python/>`_
+- `MySQL-Python <http://mysql-python.sourceforge.net/>`_
+- `oursql <https://launchpad.net/oursql>`_
+- `PyMySQL <https://github.com/PyMySQL/PyMySQL/>`_
 
 Documentation
 -------------
@@ -34,15 +31,9 @@ Documentation
    scripts.rst
    utilities.rst
 
-
-
-
-
-
 Indices and tables
 ==================
 
 * :ref:`genindex`
 * :ref:`modindex`
 * :ref:`search`
-
