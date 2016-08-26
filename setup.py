@@ -23,7 +23,7 @@ try:
     setuptools_kwargs = {
         'provides': ['doloop'],
         'test_suite': 'tests.suite.load_tests',
-        'tests_require': ['PyMySQL', 'mysql-connector'],
+        'tests_require': ['PyMySQL'],
     }
 
     # unittest2 is a backport of unittest from Python 2.7
@@ -33,6 +33,10 @@ try:
     # only add MySQLdb for Python 2
     if sys.version_info < (3, 0):
         setuptools_kwargs['tests_require'].append('MySQL-python')
+
+    # mysql-connector doesn't work on Python 3.2 (this happens for pypy3)
+    if sys.version_info < (3, 0) or sys.version_info >= (3, 3):
+        setuptools_kwargs['tests_require'].append('mysql-connector')
 
     # oursql seems not to work right with PyPy
     if platform.python_implementation() == 'CPython':
