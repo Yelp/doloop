@@ -23,6 +23,13 @@ import tempfile
 import time
 import warnings
 
+import doloop
+from doloop import DEFAULT_ID_TYPE
+from doloop import DEFAULT_STORAGE_ENGINE
+from doloop import ONE_HOUR
+from doloop import _main_for_create_doloop_table
+from doloop import _to_list
+
 # Python 2/3 compatibility
 if sys.version_info[0] == 2:
     from StringIO import StringIO
@@ -35,13 +42,6 @@ try:
     unittest  # silence pyflakes warning
 except ImportError:
     import unittest
-
-import doloop
-from doloop import DEFAULT_ID_TYPE
-from doloop import DEFAULT_STORAGE_ENGINE
-from doloop import ONE_HOUR
-from doloop import _main_for_create_doloop_table
-from doloop import _to_list
 
 log = logging.getLogger('doloop_test')
 
@@ -184,7 +184,7 @@ class PyMySQLTestCase(unittest.TestCase):
     def _connect(self, **kwargs):
         """Connect using self.mysql_module().connect"""
         # PyMySQL requires user (though it may be empty)
-        if not 'user' in kwargs:
+        if 'user' not in kwargs:
             kwargs['user'] = ''
         return self.mysql_module().connect(**kwargs)
 
@@ -307,7 +307,7 @@ class PyMySQLTestCase(unittest.TestCase):
         dbconn.raise_exception_later(self.create_lock_wait_timeout_exc(),
                                      num_queries=1)
         self.assertRaises(self.mysql_module().OperationalError,
-                      doloop.create, dbconn, 'foo_loop')
+                          doloop.create, dbconn, 'foo_loop')
 
     ### tests for add() ###
 
@@ -352,7 +352,7 @@ class PyMySQLTestCase(unittest.TestCase):
 
     def test_add_table_must_be_a_string(self):
         self.assertRaises(TypeError,
-                      doloop.add, self.make_dbconn(), 999, 'foo_loop')
+                          doloop.add, self.make_dbconn(), 999, 'foo_loop')
 
     def test_add_unlocks_tables_after_exception(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
@@ -392,7 +392,7 @@ class PyMySQLTestCase(unittest.TestCase):
 
     def test_remove_table_must_be_a_string(self):
         self.assertRaises(TypeError,
-                      doloop.remove, self.make_dbconn(), 999, 'foo_loop')
+                          doloop.remove, self.make_dbconn(), 999, 'foo_loop')
 
     def test_remove_unlocks_tables_after_exception(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
@@ -464,7 +464,7 @@ class PyMySQLTestCase(unittest.TestCase):
         # that was bumped, then the new stuff, then the stuff that's done
         # already
         self.assertEqual(loop.get(10, min_loop_time=0),
-                     [12, 16, 14, 17, 10, 18, 19, 13])
+                         [12, 16, 14, 17, 10, 18, 19, 13])
 
     def test_get_in_test_mode(self):
         loop = self.create_doloop()
@@ -478,7 +478,7 @@ class PyMySQLTestCase(unittest.TestCase):
 
     def test_get_table_must_be_a_string(self):
         self.assertRaises(TypeError,
-                      doloop.get, self.make_dbconn(), 10, 'foo_loop')
+                          doloop.get, self.make_dbconn(), 10, 'foo_loop')
 
     def test_get_lock_for_must_be_a_positive_number(self):
         loop = self.create_doloop()
@@ -564,7 +564,7 @@ class PyMySQLTestCase(unittest.TestCase):
 
     def test_did_table_must_be_a_string(self):
         self.assertRaises(TypeError,
-                      doloop.did, self.make_dbconn(), 999, 'foo_loop')
+                          doloop.did, self.make_dbconn(), 999, 'foo_loop')
 
     def test_did_unlocks_tables_after_exception(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
@@ -630,7 +630,7 @@ class PyMySQLTestCase(unittest.TestCase):
 
     def test_unlock_table_must_be_a_string(self):
         self.assertRaises(TypeError,
-                      doloop.unlock, self.make_dbconn(), 999, 'foo_loop')
+                          doloop.unlock, self.make_dbconn(), 999, 'foo_loop')
 
     def test_unlock_unlocks_tables_after_exception(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
@@ -683,7 +683,7 @@ class PyMySQLTestCase(unittest.TestCase):
 
         self.assertEqual(loop.bump([7, 17]), 2)  # 7 is auto-added
         self.assertEqual(loop.bump([19, 25], lock_for=-10, auto_add=False),
-                     1)  # no row for 25
+                         1)  # no row for 25
         self.assertEqual(loop.get(5), [19, 7, 17, 10, 11])
 
     def test_bump_in_test_mode(self):
@@ -697,7 +697,7 @@ class PyMySQLTestCase(unittest.TestCase):
 
     def test_bump_table_must_be_a_string(self):
         self.assertRaises(TypeError,
-                      doloop.bump, self.make_dbconn(), 999, 'foo_loop')
+                          doloop.bump, self.make_dbconn(), 999, 'foo_loop')
 
     def test_bump_min_loop_time_must_be_a_number(self):
         loop = self.create_doloop()
@@ -737,10 +737,10 @@ class PyMySQLTestCase(unittest.TestCase):
         # newly added IDs have no locked or updated time
         self.assertEqual(loop.check(10), {10: (None, None)})
         self.assertEqual(loop.check([18, 19]), {18: (None, None),
-                                            19: (None, None)})
+                                                19: (None, None)})
         self.assertEqual(loop.check(20), {})  # 20 doesn't exist
         self.assertEqual(loop.check([18, 19, 20]), {18: (None, None),
-                                                19: (None, None)})
+                                                    19: (None, None)})
 
         self.assertEqual(loop.get(2), [10, 11])
         loop.did(11)
@@ -767,7 +767,7 @@ class PyMySQLTestCase(unittest.TestCase):
 
     def test_check_table_must_be_a_string(self):
         self.assertRaises(TypeError,
-                      doloop.check, self.make_dbconn(), 999, 'foo_loop')
+                          doloop.check, self.make_dbconn(), 999, 'foo_loop')
 
     def test_check_tables_unlocked_after_exception(self):
         loop, dbconn = self.create_doloop_and_wrapped_dbconn()
@@ -873,7 +873,7 @@ class PyMySQLTestCase(unittest.TestCase):
 
     def test_stats_table_must_be_a_string(self):
         self.assertRaises(TypeError,
-                      doloop.stats, 'foo_loop', self.make_dbconn())
+                          doloop.stats, 'foo_loop', self.make_dbconn())
 
     def test_stats_re_raises_exception(self):
         # stats() runs in READ UNCOMMITTED mode (no locking), so we should
@@ -900,7 +900,7 @@ class PyMySQLTestCase(unittest.TestCase):
         # this is okay; bad conn isn't called yet
         foo_loop_bad = doloop.DoLoop(bad_conn, 'foo_loop')
         self.assertRaises(Exception, foo_loop_bad.add,
-                      [10, 11, 12, 13, 14, 15, 16, 17, 18, 19])
+                          [10, 11, 12, 13, 14, 15, 16, 17, 18, 19])
 
     def test_wrapper_table_attribute(self):
         foo_loop = self.create_doloop('foo_loop')

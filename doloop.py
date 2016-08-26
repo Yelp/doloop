@@ -33,6 +33,10 @@ Run one or more workers (e.g in a crontab), with code like this::
 """
 from __future__ import print_function
 
+import inspect
+import optparse
+import sys
+
 __author__ = 'David Marin <dave@yelp.com>'
 
 __credits__ = [
@@ -41,10 +45,6 @@ __credits__ = [
 ]
 
 __version__ = '1.0.0'
-
-import inspect
-import optparse
-import sys
 
 #: One hour, in seconds
 ONE_HOUR = 60 * 60
@@ -69,7 +69,6 @@ if sys.version_info[0] == 2:
 else:
     _integer_types = (int,)
     _string_types = (str,)
-
 
 
 ### MySQL module compabitibility ###
@@ -837,9 +836,9 @@ def stats(dbconn, table):
                     ' FROM `%s` WHERE `lock_until` IS NULL' % table)
 
     locked_sql = ('SELECT COUNT(*),'
-                   ' MIN(`last_updated`), MAX(`last_updated`),'
-                   ' MIN(`lock_until`), MAX(`lock_until`)'
-                   ' FROM `%s` WHERE `lock_until` > ?' % table)
+                  ' MIN(`last_updated`), MAX(`last_updated`),'
+                  ' MIN(`lock_until`), MAX(`lock_until`)'
+                  ' FROM `%s` WHERE `lock_until` > ?' % table)
 
     bumped_sql = ('SELECT COUNT(*),'
                   ' MIN(`last_updated`), MAX(`last_updated`),'
