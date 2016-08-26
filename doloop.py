@@ -31,7 +31,11 @@ Run one or more workers (e.g in a crontab), with code like this::
     doloop.did(dbconn, 'foo_loop', foo_ids)
 
 """
-from __future__ import with_statement
+from __future__ import print_function
+
+import inspect
+import optparse
+import sys
 
 __author__ = 'David Marin <dave@yelp.com>'
 
@@ -40,11 +44,7 @@ __credits__ = [
     'Jennifer Snyder <jsnyder@yelp.com>',
 ]
 
-__version__ = '0.4.2'
-
-import inspect
-import optparse
-import sys
+__version__ = '1.0.0'
 
 #: One hour, in seconds
 ONE_HOUR = 60 * 60
@@ -60,6 +60,15 @@ DEFAULT_ID_TYPE = 'int'
 
 #: Default storage engine for doloop tables
 DEFAULT_STORAGE_ENGINE = 'InnoDB'
+
+
+### Python 2/3 compatibility ###
+if sys.version_info[0] == 2:
+    _integer_types = (int, long)
+    _string_types = (basestring,)
+else:
+    _integer_types = (int,)
+    _string_types = (str,)
 
 
 ### MySQL module compabitibility ###
@@ -152,7 +161,7 @@ def _execute(cursor, qmark_query, params):
         # try format (most common) and then qmark
         try:
             cursor.execute(format_query, params)
-        except Exception, e:
+        except Exception as e:
             if e.__class__.__name__ not in _WRONG_PARAMSTYLE_EXC_NAMES:
                 raise
             cursor.execute(qmark_query, params)
@@ -166,6 +175,8 @@ def _execute(cursor, qmark_query, params):
 def _to_list(x):
     if isinstance(x, list):
         return x
+    elif isinstance(x, (_string_types, bytes)):  # need this for Python 3
+        return [x]
     elif hasattr(x, '__iter__'):
         return list(x)
     else:
@@ -179,9 +190,8 @@ def _run(query, dbconn, roll_back, table_to_lock=None):
 
     :param query: a function which takes a db cursor as its only argument
     :param dbconn: any DBI-compliant MySQL connection object
-    :param table: table to lock while running the query
-    :param str lock_mode: mode to lock *table* in (e.g. ``'WRITE'``), or
-                          ``None`` if *table* shouldn't be locked
+    :param str table_to_lock: optional table to lock (in WRITE mode) while
+                              running the query
     :param bool roll_back: if true, always roll back after issuing the query
 
     If there is already a transaction in progress on *dbconn*, we'll roll
@@ -219,7 +229,7 @@ def _run(query, dbconn, roll_back, table_to_lock=None):
 
 def _check_table_is_a_string(table):
     """Check that table is a string, to avoid cryptic SQL errors"""
-    if not isinstance(table, basestring):
+    if not isinstance(table, _string_types):
         raise TypeError('table must be a string, not %r' % (table,))
 
 
@@ -281,9 +291,12 @@ def sql_for_create(table, id_type=DEFAULT_ID_TYPE,
 ) ENGINE=%s""" % (table, id_type, engine)
 
 
-def _main_for_create_doloop_table(args):
+def _main_for_create_doloop_table(args=None):
     """Driver for the create-doloop-table script. See docs/scripts.rst
     for details."""
+    if args is None:
+        args = sys.argv[1:]
+
     usage = '%prog [options] table [table ...] | mysql -D dbname'
     description = ('Print SQL to create one or more task loop tables.')
     parser = optparse.OptionParser(usage=usage, description=description)
@@ -304,10 +317,10 @@ def _main_for_create_doloop_table(args):
         parser.error('You must specify at least one table name')
 
     for table in tables:
-        print sql_for_create(table,
+        print(sql_for_create(table,
                              id_type=options.id_type,
-                             engine=options.engine) + ';'
-        print
+                             engine=options.engine) + ';')
+        print()
 
 
 ### Adding and removing IDs ###
@@ -465,17 +478,17 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
 
     _check_table_is_a_string(table)
 
-    if not isinstance(lock_for, (int, long, float)):
+    if not isinstance(lock_for, (_integer_types, float)):
         raise TypeError('lock_for must be a number, not %r' % (lock_for,))
 
     if not lock_for > 0:
         raise ValueError('lock_for must be positive, not %d' % (lock_for,))
 
-    if not isinstance(min_loop_time, (int, long, float)):
+    if not isinstance(min_loop_time, (_integer_types, float)):
         raise TypeError('min_loop_time must be a number, not %r' %
                         (min_loop_time,))
 
-    if not isinstance(limit, (int, long)):
+    if not isinstance(limit, _integer_types):
         raise TypeError('limit must be an integer, not %r' % (limit,))
 
     if not limit >= 0:
@@ -686,7 +699,7 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True, test=False):
     """
     _check_table_is_a_string(table)
 
-    if not isinstance(lock_for, (int, long, float)):
+    if not isinstance(lock_for, (_integer_types, float)):
         raise TypeError('lock_for must be a number, not %r' %
                         (lock_for,))
 
@@ -823,9 +836,9 @@ def stats(dbconn, table):
                     ' FROM `%s` WHERE `lock_until` IS NULL' % table)
 
     locked_sql = ('SELECT COUNT(*),'
-                   ' MIN(`last_updated`), MAX(`last_updated`),'
-                   ' MIN(`lock_until`), MAX(`lock_until`)'
-                   ' FROM `%s` WHERE `lock_until` > ?' % table)
+                  ' MIN(`last_updated`), MAX(`last_updated`),'
+                  ' MIN(`lock_until`), MAX(`lock_until`)'
+                  ' FROM `%s` WHERE `lock_until` > ?' % table)
 
     bumped_sql = ('SELECT COUNT(*),'
                   ' MIN(`last_updated`), MAX(`last_updated`),'
@@ -837,10 +850,12 @@ def stats(dbconn, table):
 
         cursor.execute(id_and_now_sql)
         r['min_id'], r['max_id'], now = cursor.fetchall()[0]
-        # clean up unnecessary longs
-        for key in ('min_id', 'max_id'):
-            if isinstance(r[key], long):
-                r[key] = int(r[key])
+
+        # clean up unnecessary longs (Python 2 only)
+        if sys.version_info[0] == 2:
+            for key in ('min_id', 'max_id'):
+                if isinstance(r[key], long):
+                    r[key] = int(r[key])
 
         # safe min and max for times that may be None (if no rows)
         def min_since_now(*times):

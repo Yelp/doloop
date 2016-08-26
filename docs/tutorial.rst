@@ -10,9 +10,7 @@ uses fairly basic SQL, and should work on MySQL versions as early as 5.0,
 if not earlier.
 
 You'll also want to install a Python MySQL driver, such as
-`python-MySQL <http://mysql-python.sourceforge.net/>`_ (other options include
-`PyMySQL <https://github.com/petehunt/PyMySQL/>`_ and
-`oursql <https://launchpad.net/oursql>`_).
+`PyMySQL <https://github.com/PyMySQL/PyMySQL/>`_.
 
 Next, you'll want to create at least one doloop table:
 
