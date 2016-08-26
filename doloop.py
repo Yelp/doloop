@@ -32,7 +32,6 @@ Run one or more workers (e.g in a crontab), with code like this::
 
 """
 from __future__ import print_function
-from __future__ import with_statement
 
 __author__ = 'David Marin <dave@yelp.com>'
 
