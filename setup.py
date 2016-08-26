@@ -22,7 +22,7 @@ try:
     setuptools_kwargs = {
         'provides': ['doloop'],
         'test_suite': 'tests.suite.load_tests',
-        'tests_require': ['PyMySQL', 'mysql-connector', 'oursql'],
+        'tests_require': ['PyMySQL', 'mysql-connector'],
     }
 
     # unittest2 is a backport of unittest from Python 2.7
@@ -32,6 +32,9 @@ try:
     # only add MySQLdb for Python 2
     if sys.version_info < (3, 0):
         setuptools_kwargs['tests_require'].append('MySQL-python')
+        setuptools_kwargs['tests_require'].append('oursql')
+    else:
+        setuptools_kwargs['tests_require'].append('oursql3')
 
 except ImportError:
     from distutils.core import setup
