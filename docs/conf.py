@@ -44,7 +44,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = u'doloop'
-copyright = u'2011, Yelp'
+copyright = u'2011-2016, Yelp'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
