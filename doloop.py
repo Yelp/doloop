@@ -293,9 +293,11 @@ def sql_for_create(table, id_type=DEFAULT_ID_TYPE,
 ) ENGINE=%s""" % (table, id_type, engine)
 
 
-def _main_for_create_doloop_table(args):
+def _main_for_create_doloop_table(args=None):
     """Driver for the create-doloop-table script. See docs/scripts.rst
     for details."""
+    args = args or sys.argv[1:]
+
     usage = '%prog [options] table [table ...] | mysql -D dbname'
     description = ('Print SQL to create one or more task loop tables.')
     parser = optparse.OptionParser(usage=usage, description=description)

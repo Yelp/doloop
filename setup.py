@@ -61,11 +61,15 @@ setup(
         'Topic :: Database',
     ],
     description='Task loop for keeping things updated',
+    entry_points=dict(
+        console_scripts=[
+            'create-doloop-table=doloop:_main_for_create_doloop_table'
+        ],
+    ),
     license='Apache',
     long_description=open('README.rst').read(),
     name='doloop',
     py_modules=['doloop'],
-    scripts=['bin/create-doloop-table'],
     url='http://github.com/Yelp/doloop',
     version=doloop.__version__,
     **setuptools_kwargs
