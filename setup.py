@@ -12,6 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import platform
 import sys
 
 import doloop
@@ -32,9 +33,13 @@ try:
     # only add MySQLdb for Python 2
     if sys.version_info < (3, 0):
         setuptools_kwargs['tests_require'].append('MySQL-python')
-        setuptools_kwargs['tests_require'].append('oursql')
-    else:
-        setuptools_kwargs['tests_require'].append('oursql3')
+
+    # oursql seems not to work right with PyPy
+    if platform.python_implementation() == 'CPython':
+        if sys.version_info < (3, 0):
+            setuptools_kwargs['tests_require'].append('oursql')
+        else:
+            setuptools_kwargs['tests_require'].append('oursql3')
 
 except ImportError:
     from distutils.core import setup
