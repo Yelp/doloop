@@ -196,7 +196,8 @@ class PyMySQLTestCase(unittest.TestCase):
             __import__(self.MYSQL_MODULE)
             return sys.modules[self.MYSQL_MODULE]
         except ImportError:
-            raise unittest.SkipTest('%s is not installed' % self.MYSQL_MODULE)
+            raise unittest.SkipTest('%s module is not installed' %
+                                    self.MYSQL_MODULE)
 
     def make_dbconn(self):
         return self._connect(unix_socket=self.mysql_socket, db='doloop')
