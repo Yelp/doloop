@@ -41,7 +41,7 @@ __credits__ = [
     'Jennifer Snyder <jsnyder@yelp.com>',
 ]
 
-__version__ = '0.4.2'
+__version__ = '1.0.0'
 
 import inspect
 import optparse
