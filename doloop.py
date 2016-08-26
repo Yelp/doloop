@@ -65,11 +65,11 @@ DEFAULT_STORAGE_ENGINE = 'InnoDB'
 
 ### Python 2/3 compatibility ###
 if sys.version_info[0] == 2:
-    integer_types = (int, long)
-    string_types = (basestring,)
+    _integer_types = (int, long)
+    _string_types = (basestring,)
 else:
-    integer_types = (int,)
-    string_types = (str,)
+    _integer_types = (int,)
+    _string_types = (str,)
 
 
 
@@ -177,7 +177,7 @@ def _execute(cursor, qmark_query, params):
 def _to_list(x):
     if isinstance(x, list):
         return x
-    elif isinstance(x, (string_types, bytes)):  # need this for Python 3
+    elif isinstance(x, (_string_types, bytes)):  # need this for Python 3
         return [x]
     elif hasattr(x, '__iter__'):
         return list(x)
@@ -232,7 +232,7 @@ def _run(query, dbconn, roll_back, table_to_lock=None):
 
 def _check_table_is_a_string(table):
     """Check that table is a string, to avoid cryptic SQL errors"""
-    if not isinstance(table, string_types):
+    if not isinstance(table, _string_types):
         raise TypeError('table must be a string, not %r' % (table,))
 
 
@@ -478,17 +478,17 @@ def get(dbconn, table, limit, lock_for=ONE_HOUR, min_loop_time=ONE_HOUR,
 
     _check_table_is_a_string(table)
 
-    if not isinstance(lock_for, (integer_types, float)):
+    if not isinstance(lock_for, (_integer_types, float)):
         raise TypeError('lock_for must be a number, not %r' % (lock_for,))
 
     if not lock_for > 0:
         raise ValueError('lock_for must be positive, not %d' % (lock_for,))
 
-    if not isinstance(min_loop_time, (integer_types, float)):
+    if not isinstance(min_loop_time, (_integer_types, float)):
         raise TypeError('min_loop_time must be a number, not %r' %
                         (min_loop_time,))
 
-    if not isinstance(limit, integer_types):
+    if not isinstance(limit, _integer_types):
         raise TypeError('limit must be an integer, not %r' % (limit,))
 
     if not limit >= 0:
@@ -699,7 +699,7 @@ def bump(dbconn, table, id_or_ids, lock_for=0, auto_add=True, test=False):
     """
     _check_table_is_a_string(table)
 
-    if not isinstance(lock_for, (integer_types, float)):
+    if not isinstance(lock_for, (_integer_types, float)):
         raise TypeError('lock_for must be a number, not %r' %
                         (lock_for,))
 
