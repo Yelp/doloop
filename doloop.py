@@ -192,9 +192,8 @@ def _run(query, dbconn, roll_back, table_to_lock=None):
 
     :param query: a function which takes a db cursor as its only argument
     :param dbconn: any DBI-compliant MySQL connection object
-    :param table: table to lock while running the query
-    :param str lock_mode: mode to lock *table* in (e.g. ``'WRITE'``), or
-                          ``None`` if *table* shouldn't be locked
+    :param str table_to_lock: optional table to lock (in WRITE mode) while
+                              running the query
     :param bool roll_back: if true, always roll back after issuing the query
 
     If there is already a transaction in progress on *dbconn*, we'll roll
