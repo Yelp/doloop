@@ -36,21 +36,6 @@ try:
 except ImportError:
     import unittest
 
-import mysql.connector
-import pymysql
-
-try:
-    import MySQLdb
-    MySQLdb
-except ImportError:
-    MySQLdb = None
-
-try:
-    import oursql
-    oursql
-except ImportError:
-    oursql = None
-
 import doloop
 from doloop import DEFAULT_ID_TYPE
 from doloop import DEFAULT_STORAGE_ENGINE
@@ -113,10 +98,12 @@ class ExceptionRaisingCursorWrapper(object):
 
 class PyMySQLTestCase(unittest.TestCase):
 
-    MYSQL_MODULE = pymysql
+    MYSQL_MODULE = 'pymysql'
 
     @classmethod
     def setUpClass(self):
+        self.mysql_module()  # skip entire test case if module not installed
+
         # turn off warnings while testing
         warnings.simplefilter('ignore')
 
@@ -195,11 +182,21 @@ class PyMySQLTestCase(unittest.TestCase):
         dbconn.cursor().execute('CREATE DATABASE `doloop`')
 
     def _connect(self, **kwargs):
-        """Connect using self.MYSQL_MODULE.connect"""
+        """Connect using self.mysql_module().connect"""
         # PyMySQL requires user (though it may be empty)
         if not 'user' in kwargs:
             kwargs['user'] = ''
-        return self.MYSQL_MODULE.connect(**kwargs)
+        return self.mysql_module().connect(**kwargs)
+
+    @classmethod
+    def mysql_module(self):
+        """Dynamically import self.MYSQL_MODULE, raising SkipTest if
+        we can't."""
+        try:
+            __import__(self.MYSQL_MODULE)
+            return sys.modules[self.MYSQL_MODULE]
+        except ImportError:
+            raise unittest.SkipTest('%s is not installed' % self.MYSQL_MODULE)
 
     def make_dbconn(self):
         return self._connect(unix_socket=self.mysql_socket, db='doloop')
@@ -223,7 +220,7 @@ class PyMySQLTestCase(unittest.TestCase):
 
     def create_lock_wait_timeout_exc(self):
         """Create a DB exception that we're likely to encounter."""
-        return self.MYSQL_MODULE.OperationalError(
+        return self.mysql_module().OperationalError(
             'Lock wait timeout exceeded; try restarting transaction', 1205)
 
     ### tests for database wrapper ###
@@ -308,7 +305,7 @@ class PyMySQLTestCase(unittest.TestCase):
 
         dbconn.raise_exception_later(self.create_lock_wait_timeout_exc(),
                                      num_queries=1)
-        self.assertRaises(self.MYSQL_MODULE.OperationalError,
+        self.assertRaises(self.mysql_module().OperationalError,
                       doloop.create, dbconn, 'foo_loop')
 
     ### tests for add() ###
@@ -361,7 +358,7 @@ class PyMySQLTestCase(unittest.TestCase):
 
         dbconn.raise_exception_later(self.create_lock_wait_timeout_exc(),
                                      num_queries=3)
-        self.assertRaises(self.MYSQL_MODULE.OperationalError, loop.add, 42)
+        self.assertRaises(self.mysql_module().OperationalError, loop.add, 42)
 
         self.assertEqual(loop.add(42), 1)
 
@@ -403,7 +400,8 @@ class PyMySQLTestCase(unittest.TestCase):
 
         dbconn.raise_exception_later(self.create_lock_wait_timeout_exc(),
                                      num_queries=3)
-        self.assertRaises(self.MYSQL_MODULE.OperationalError, loop.remove, 10)
+        self.assertRaises(self.mysql_module().OperationalError,
+                          loop.remove, 10)
 
         self.assertEqual(loop.remove(11), 1)
 
@@ -523,7 +521,7 @@ class PyMySQLTestCase(unittest.TestCase):
 
         dbconn.raise_exception_later(self.create_lock_wait_timeout_exc(),
                                      num_queries=3)
-        self.assertRaises(self.MYSQL_MODULE.OperationalError, loop.get, 2)
+        self.assertRaises(self.mysql_module().OperationalError, loop.get, 2)
 
         self.assertEqual(loop.get(2), [10, 11])
 
@@ -574,7 +572,7 @@ class PyMySQLTestCase(unittest.TestCase):
 
         dbconn.raise_exception_later(self.create_lock_wait_timeout_exc(),
                                      num_queries=3)
-        self.assertRaises(self.MYSQL_MODULE.OperationalError, loop.did, 10)
+        self.assertRaises(self.mysql_module().OperationalError, loop.did, 10)
 
         self.assertEqual(loop.did(11), 1)
 
@@ -641,7 +639,8 @@ class PyMySQLTestCase(unittest.TestCase):
 
         dbconn.raise_exception_later(self.create_lock_wait_timeout_exc(),
                                      num_queries=3)
-        self.assertRaises(self.MYSQL_MODULE.OperationalError, loop.unlock, 11)
+        self.assertRaises(self.mysql_module().OperationalError,
+                          loop.unlock, 11)
 
         self.assertEqual(loop.unlock(10), 1)
 
@@ -718,7 +717,7 @@ class PyMySQLTestCase(unittest.TestCase):
 
         dbconn.raise_exception_later(self.create_lock_wait_timeout_exc(),
                                      num_queries=3)
-        self.assertRaises(self.MYSQL_MODULE.OperationalError, loop.bump, 14)
+        self.assertRaises(self.mysql_module().OperationalError, loop.bump, 14)
 
         self.assertEqual(loop.bump(13), 1)
 
@@ -776,7 +775,7 @@ class PyMySQLTestCase(unittest.TestCase):
 
         dbconn.raise_exception_later(self.create_lock_wait_timeout_exc(),
                                      num_queries=2)
-        self.assertRaises(self.MYSQL_MODULE.OperationalError, loop.check, 10)
+        self.assertRaises(self.mysql_module().OperationalError, loop.check, 10)
 
         self.assertEqual(loop.check(10), {10: (None, None)})
 
@@ -882,7 +881,7 @@ class PyMySQLTestCase(unittest.TestCase):
 
         dbconn.raise_exception_later(self.create_lock_wait_timeout_exc(),
                                      num_queries=5)
-        self.assertRaises(self.MYSQL_MODULE.OperationalError, loop.stats)
+        self.assertRaises(self.mysql_module().OperationalError, loop.stats)
 
     ### tests for the DoLoop wrapper object ###
 
@@ -919,19 +918,17 @@ class PyMySQLTestCase(unittest.TestCase):
 
 class MySQLConnectorTestCase(PyMySQLTestCase):
 
-    MYSQL_MODULE = mysql.connector
+    MYSQL_MODULE = 'mysql.connector'
 
 
-@unittest.skipIf(MySQLdb is None, 'MySQLdb not installed')
 class OurSQLTestCase(PyMySQLTestCase):
 
-    MYSQL_MODULE = oursql
+    MYSQL_MODULE = 'oursql'
 
 
-@unittest.skipIf(MySQLdb is None, 'MySQLdb not installed')
 class MySQLdbTestCase(PyMySQLTestCase):
 
-    MYSQL_MODULE = MySQLdb
+    MYSQL_MODULE = 'MySQLdb'
 
 
 class CreateDoloopTableScriptTestCase(unittest.TestCase):
